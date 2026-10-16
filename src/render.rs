@@ -121,15 +121,30 @@ enum Item {
     Wrench,
 }
 
+const WRENCH: [&str; 5] = [".......OOO.", "OOOOOOOOLBO", "OLLLLLLLBO.", "OBBBBBBBBBO", ".OOOOOOOOO."];
+
+/// An open-ended wrench, spinning in four 90-degree frames.
 pub fn draw_wrench(f: &mut Frame, x: i32, y: i32, spin: f32) {
-    let (c, s) = (spin.cos(), spin.sin());
-    let (x0, y0) = (x - (c * 5.0) as i32, y - (s * 5.0) as i32);
-    let (x1, y1) = (x + (c * 5.0) as i32, y + (s * 5.0) as i32);
-    f.thick_line(x0, y0 + 1, x1, y1 + 1, 2, OUTLINE);
-    f.thick_line(x0, y0, x1, y1, 2, rgb(184, 192, 208));
-    f.fill_ellipse(x1, y1, 2, 2, rgb(216, 224, 232));
-    f.set(x1 + (c * 2.0) as i32, y1 + (s * 2.0) as i32, OUTLINE);
-    f.set(x0, y0, rgb(248, 248, 248));
+    let frame = ((spin / std::f32::consts::FRAC_PI_2) as i32).rem_euclid(4);
+    let (w, h) = (WRENCH[0].len() as i32, WRENCH.len() as i32);
+    for (ry, row) in WRENCH.iter().enumerate() {
+        for (rx, ch) in row.bytes().enumerate() {
+            let c = match ch {
+                b'O' => OUTLINE,
+                b'B' => rgb(168, 168, 184),
+                b'L' => rgb(232, 232, 240),
+                _ => continue,
+            };
+            let (dx, dy) = (rx as i32 - w / 2, ry as i32 - h / 2);
+            let (px, py) = match frame {
+                0 => (dx, dy),
+                1 => (-dy, dx),
+                2 => (-dx, -dy),
+                _ => (dy, -dx),
+            };
+            f.set(x + px, y + py, c);
+        }
+    }
 }
 
 fn coach_palette(team: usize) -> Palette {
@@ -139,12 +154,15 @@ fn coach_palette(team: usize) -> Palette {
     pal[sprites::SKIN_D as usize] = rgb(184, 120, 88);
     pal[sprites::HAIR as usize] = rgb(200, 200, 208);
     pal[sprites::HAIR_D as usize] = rgb(136, 136, 152);
-    pal[sprites::SHIRT as usize] = shade(td.shirt.0, 3, 4);
-    pal[sprites::SHIRT_D as usize] = shade(td.shirt.1, 3, 4);
-    pal[sprites::PANTS as usize] = rgb(88, 80, 72);
-    pal[sprites::PANTS_D as usize] = rgb(56, 48, 48);
-    pal[sprites::ACC as usize] = rgb(248, 248, 248);
-    pal[sprites::ACC_D as usize] = rgb(160, 160, 176);
+    // neutral tracksuit, team color only on the stripe, shoes and cap
+    pal[sprites::SHIRT as usize] = rgb(232, 232, 240);
+    pal[sprites::SHIRT_D as usize] = rgb(168, 176, 200);
+    pal[sprites::PANTS as usize] = rgb(40, 40, 72);
+    pal[sprites::PANTS_D as usize] = rgb(24, 24, 48);
+    pal[sprites::ACC as usize] = td.shirt.0;
+    pal[sprites::ACC_D as usize] = td.shirt.1;
+    pal[sprites::CAP as usize] = td.shirt.0;
+    pal[sprites::CAP_D as usize] = td.shirt.1;
     pal
 }
 
@@ -152,17 +170,26 @@ fn draw_coach(f: &mut Frame, m: &Match, bank: &SpriteBank, team: usize, t: u32) 
     let c = &m.coaches[team];
     let (x, y) = coach_pos(team);
     let (sx, sy) = proj(x, y, 0.0);
+    // sits on the bench; jumps up to throw, or when the crowd goes wild
     let pose = if c.warn > 0 {
         Pose::WindUp
     } else if c.throw_t > 0 {
         Pose::Throw
-    } else if m.phase == Phase::Play && (t / 40) % 4 == 0 {
-        Pose::Victory
-    } else {
+    } else if m.excite > 0.7 && (t / 12) % 2 == 0 {
         Pose::Stand
+    } else {
+        Pose::Duck
     };
     let flip = team == 1;
-    f.shade_ellipse(sx, sy, 7, 2, 5, 8);
+    f.shade_ellipse(sx, sy, 15, 2, 5, 8);
+    let wood = rgb(152, 96, 56);
+    f.rect(sx - 15, sy - 9, 30, 5, OUTLINE);
+    f.rect(sx - 14, sy - 8, 28, 3, wood);
+    f.hline(sx - 14, sx + 13, sy - 8, rgb(192, 136, 88));
+    for lx in [sx - 13, sx + 11] {
+        f.rect(lx - 1, sy - 5, 4, 5, OUTLINE);
+        f.rect(lx, sy - 5, 2, 5, shade(wood, 3, 4));
+    }
     blit(f, bank.get(2, pose), sx, sy, flip, &coach_palette(m.sides[team].team));
     if c.warn > 0 {
         let (hx, hy) = sprites::hand(pose);
@@ -173,7 +200,7 @@ fn draw_coach(f: &mut Frame, m: &Match, bank: &SpriteBank, team: usize, t: u32) 
 
 pub fn draw_match(f: &mut Frame, m: &Match, sc: &Scenery, bank: &SpriteBank, t: u32) {
     f.copy_from(&sc.bg);
-    sc.draw_ambient(f, t, m.excite);
+    sc.draw_ambient(f, t, m.excite, true);
 
     // shadows first, they sit on the floor under everything
     for p in &m.players {
@@ -361,7 +388,8 @@ pub fn draw_match(f: &mut Frame, m: &Match, sc: &Scenery, bank: &SpriteBank, t: 
 
 /// The coach's famous line, in a classic dialog box.
 fn draw_quote(f: &mut Frame, m: &Match, bank: &SpriteBank) {
-    let y = 196;
+    // under the HUD, so the throw at the bottom of the court stays visible
+    let y = 35;
     f.rect(4, y, 248, 26, rgb(16, 16, 48));
     f.rect_outline(4, y, 248, 26, rgb(248, 248, 248));
     f.rect_outline(5, y + 1, 246, 24, rgb(96, 104, 168));
@@ -435,10 +463,15 @@ fn draw_player(f: &mut Frame, m: &Match, bank: &SpriteBank, i: usize, t: u32) {
                 let col = if pi == 0 { rgb(248, 232, 64) } else { rgb(96, 224, 248) };
                 let label = if pi == 0 { "1P" } else { "2P" };
                 let y = sy - 44 - bob;
-                f.text_grad(sx - 7, y, label, &grad7(col), OUTLINE, true);
+                // a solid tag stays readable on any background
+                f.rect(sx - 9, y - 2, 19, 11, OUTLINE);
+                f.rect(sx - 8, y - 1, 17, 9, col);
+                f.text(sx - 5, y, label, rgb(16, 16, 48));
+                for k in 0..4 {
+                    f.hline(sx - 3 + k, sx + 3 - k, y + 9 + k, OUTLINE);
+                }
                 for k in 0..3 {
-                    f.hline(sx - 3 + k, sx + 3 - k, y + 8 + k, OUTLINE);
-                    f.hline(sx - 2 + k, sx + 2 - k, y + 8 + k, col);
+                    f.hline(sx - 2 + k, sx + 2 - k, y + 9 + k, col);
                 }
             }
         }

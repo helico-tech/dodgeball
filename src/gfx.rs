@@ -332,10 +332,12 @@ impl Frame {
                     let (ul, ur, dl, dr) = (on(cx - 1, cy - 1), on(cx + 1, cy - 1), on(cx - 1, cy + 1), on(cx + 1, cy + 1));
                     // round a corner only where the outline steps diagonally (O, C, S),
                     // so D, B and E keep their square corners
-                    let tl = !u && !l && (dl || ur);
-                    let tr = !u && !r && (dr || ul);
-                    let bl = !d && !l && (ul || dr);
-                    let br = !d && !r && (ur || dl);
+                    // ink two cells away means the gap is a notch (B's waist), not the outside
+                    let (uu, dd) = (on(cx, cy - 2), on(cx, cy + 2));
+                    let tl = !u && !l && (dl || ur) && !uu;
+                    let tr = !u && !r && (dr || ul) && !uu;
+                    let bl = !d && !l && (ul || dr) && !dd;
+                    let br = !d && !r && (ur || dl) && !dd;
                     for by in 0..scale {
                         // italic: shift every pixel row, so strokes stay connected
                         let shear = (7 * scale - (gy as i32 * scale + by)) / 3;

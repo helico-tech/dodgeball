@@ -379,7 +379,7 @@ impl Scenery {
 
     // ------------------------------------------------------------ ambient
 
-    pub fn draw_ambient(&self, f: &mut Frame, t: u32, excite: f32) {
+    pub fn draw_ambient(&self, f: &mut Frame, t: u32, excite: f32, boards: bool) {
         match self.court {
             Court::Beach => {
                 // wave foam and glints moving on the water
@@ -429,7 +429,9 @@ impl Scenery {
             Court::Skatepark => {}
         }
         self.draw_fans(f, t, excite);
-        self.draw_boards(f);
+        if boards {
+            self.draw_boards(f);
+        }
     }
 
     /// Advertising boards along the far side, in front of the crowd.
@@ -438,7 +440,7 @@ impl Scenery {
             Court::Beach => ["RAD COLA", "SURF WAX", "HELICO", "TUBULAR"],
             Court::Boardwalk => ["PIZZA", "RAD COLA", "NEON FM", "HELICO"],
             Court::Slopes => ["SKI WAX", "HOT COCOA", "HELICO", "RAD COLA"],
-            Court::Skatepark => ["SK8 SHOP", "RAD COLA", "HELICO", "GNARLY"],
+            Court::Skatepark => ["THRASH", "RAD COLA", "HELICO", "WHEELS"],
         };
         let boards = [
             (rgb(24, 24, 88), rgb(248, 216, 48)),
@@ -449,12 +451,13 @@ impl Scenery {
         for k in 0..4 {
             let x = k * 64;
             let (bg, fg) = boards[k as usize];
-            f.rect(x, 104, 64, 8, bg);
-            f.hline(x, x + 63, 104, mix(bg, 0xFFFFFF, 0.4));
-            f.hline(x, x + 63, 111, shade(bg, 1, 2));
-            f.set(x, 105, shade(bg, 1, 2));
+            let fg = mix(fg, bg, 0.3);
+            f.rect(x, 103, 64, 10, bg);
+            f.hline(x, x + 63, 103, mix(bg, 0xFFFFFF, 0.4));
+            f.hline(x, x + 63, 112, shade(bg, 1, 2));
+            f.set(x, 104, shade(bg, 1, 2));
             let w = words[k as usize];
-            f.text(x + 32 - text_width(w, false) / 2, 105, w, fg);
+            f.text(x + 32 - text_width(w, false) / 2, 104, w, fg);
         }
     }
 

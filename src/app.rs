@@ -373,7 +373,7 @@ impl App {
 
     fn draw_title(&self, f: &mut Frame, t: u32) {
         f.copy_from(&self.title_bg.bg);
-        self.title_bg.draw_ambient(f, t, 0.0);
+        self.title_bg.draw_ambient(f, t, 0.0, false);
         f.shade_rect(0, 0, W, 90, 3, 4);
         // logo drops in and bounces
         let st = self.t as i32;
@@ -427,15 +427,16 @@ impl App {
                 }
             }
         }
-        // scrolling ticker with the five D's
+        // footer panel: scrolling ticker with the five D's, and the copyright
+        f.rect(0, 200, W, 24, rgb(16, 16, 48));
+        f.hline(0, W - 1, 199, rgb(248, 176, 32));
         let msg = "REMEMBER THE 5 D'S OF DODGEBALL:  DODGE, DUCK, DIP, DIVE ... AND DODGE!      ";
         let w = text_width(msg, false) + 6;
         let off = (t as i32 / 2) % w;
-        f.rect(0, 204, W, 9, rgb(24, 16, 56));
         for k in 0..3 {
-            f.text_sh(k * w - off, 205, msg, rgb(248, 216, 48), OUTLINE, false);
+            f.text_sh(k * w - off, 202, msg, rgb(248, 216, 48), OUTLINE, false);
         }
-        f.text_center(128, 215, "(C) 1992 HELICO SOFT", rgb(248, 232, 200), rgb(96, 48, 32), false);
+        f.text_center(128, 213, "(C) 1992 HELICO SOFT", rgb(248, 232, 200), rgb(96, 48, 32), false);
     }
 
     fn draw_select(&self, f: &mut Frame, t: u32) {
@@ -557,7 +558,7 @@ impl App {
 
     fn draw_champion(&self, f: &mut Frame, t: u32) {
         f.copy_from(&self.title_bg.bg);
-        self.title_bg.draw_ambient(f, t, 1.0);
+        self.title_bg.draw_ambient(f, t, 1.0, false);
         f.shade_rect(0, 0, W, 100, 2, 3);
         // trophy
         let (cx, cy) = (128, 104);

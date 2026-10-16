@@ -1,5 +1,5 @@
 ---
-status: todo
+status: done
 type: debt
 created: 2026-10-16
 ---
@@ -10,4 +10,6 @@ created: 2026-10-16
 and fetching a little too much.
 
 ## Notes
+Done: Punks now power 2 / speed 4 / catch 3; `--sim 1000` gives 50%.
+
 Try run speed 0.12 per point, or Punks power 2 / speed 4 / catch 3.
