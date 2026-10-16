@@ -68,7 +68,10 @@ impl Scenery {
             ),
         };
         let hairs = [rgb(56, 48, 72), rgb(136, 80, 32), rgb(248, 216, 72), rgb(200, 72, 32)];
+        // a calmer crowd: 4 shirt colors, dimmer at the back, so players stand out
+        let shirts: Vec<u32> = shirts.into_iter().take(4).collect();
         for row in 0..2 {
+            let (num, den) = if row == 0 { (3, 4) } else { (7, 8) };
             let y = 103 + row * 5;
             let mut x = 6 + row * 3;
             while x < 250 {
@@ -77,8 +80,8 @@ impl Scenery {
                     self.fans.push(Fan {
                         x,
                         y,
-                        shirt: shirts[rng.int(shirts.len() as i32) as usize],
-                        skin: skins[rng.int(skins.len() as i32) as usize],
+                        shirt: shade(shirts[rng.int(shirts.len() as i32) as usize], num, den),
+                        skin: shade(skins[rng.int(skins.len() as i32) as usize], num, den),
                         hair: hairs[rng.int(4) as usize],
                         phase: rng.next() % 64,
                         sign,
@@ -162,10 +165,10 @@ impl Scenery {
         f.thick_line(196, 104, 200, 74, 2, tc);
         f.thick_line(216, 104, 212, 74, 2, tc);
         f.line(198, 92, 214, 84, tc);
-        f.rect(194, 64, 24, 11, rgb(216, 56, 56));
-        f.rect(196, 66, 20, 7, rgb(248, 216, 120));
-        f.rect(192, 62, 28, 3, rgb(160, 32, 48));
-        f.text(198, 67, "LIFE", rgb(160, 32, 48));
+        f.rect(192, 64, 29, 11, rgb(216, 56, 56));
+        f.rect(194, 66, 25, 7, rgb(248, 216, 120));
+        f.rect(190, 62, 33, 3, rgb(160, 32, 48));
+        f.text(195, 66, "LIFE", rgb(160, 32, 48));
         court_floor(f, None, rgb(248, 248, 248), rgb(248, 248, 248));
         // beach umbrellas behind the crowd
         umbrella(f, 82, 101, rgb(232, 48, 48));
@@ -298,7 +301,7 @@ impl Scenery {
         for x in [4, 18, 36, 222, 238, 252] {
             pine(f, x, 104, 18 + rng.int(8));
         }
-        court_floor(f, Some((rgb(224, 232, 248), rgb(240, 248, 248))), rgb(216, 40, 56), rgb(48, 88, 216));
+        court_floor(f, Some((rgb(168, 208, 240), rgb(192, 224, 248))), rgb(216, 40, 56), rgb(48, 88, 216));
         // snowman in the corner
         f.fill_ellipse(236, 206, 9, 8, rgb(248, 248, 248));
         f.fill_ellipse(236, 192, 6, 6, rgb(248, 248, 248));
@@ -343,7 +346,7 @@ impl Scenery {
         graffiti(f, 118, 84, "SK8", rgb(128, 248, 64), rgb(24, 56, 24));
         graffiti(f, 184, 84, "GNARLY", rgb(248, 200, 32), rgb(96, 40, 16));
         // chain-link fence over the wall
-        for y in 60..100 {
+        for y in 60..80 {
             for x in 0..W {
                 if (x + y) % 6 == 0 || (x - y).rem_euclid(6) == 0 {
                     f.set(x, y, rgb(200, 200, 208));
@@ -352,7 +355,7 @@ impl Scenery {
         }
         f.hline(0, W - 1, 60, rgb(136, 136, 152));
         for x in (0..W).step_by(48) {
-            f.thick_line(x + 4, 60, x + 4, 100, 2, rgb(136, 136, 152));
+            f.thick_line(x + 4, 60, x + 4, 80, 2, rgb(136, 136, 152));
         }
         // concrete
         f.rect(0, 100, W, H - 100, rgb(184, 184, 192));
@@ -426,6 +429,33 @@ impl Scenery {
             Court::Skatepark => {}
         }
         self.draw_fans(f, t, excite);
+        self.draw_boards(f);
+    }
+
+    /// Advertising boards along the far side, in front of the crowd.
+    fn draw_boards(&self, f: &mut Frame) {
+        let words: [&str; 4] = match self.court {
+            Court::Beach => ["RAD COLA", "SURF WAX", "HELICO", "TUBULAR"],
+            Court::Boardwalk => ["PIZZA", "RAD COLA", "NEON FM", "HELICO"],
+            Court::Slopes => ["SKI WAX", "HOT COCOA", "HELICO", "RAD COLA"],
+            Court::Skatepark => ["SK8 SHOP", "RAD COLA", "HELICO", "GNARLY"],
+        };
+        let boards = [
+            (rgb(24, 24, 88), rgb(248, 216, 48)),
+            (rgb(120, 16, 48), rgb(248, 248, 248)),
+            (rgb(16, 88, 64), rgb(248, 248, 248)),
+            (rgb(48, 24, 96), rgb(96, 224, 248)),
+        ];
+        for k in 0..4 {
+            let x = k * 64;
+            let (bg, fg) = boards[k as usize];
+            f.rect(x, 104, 64, 8, bg);
+            f.hline(x, x + 63, 104, mix(bg, 0xFFFFFF, 0.4));
+            f.hline(x, x + 63, 111, shade(bg, 1, 2));
+            f.set(x, 105, shade(bg, 1, 2));
+            let w = words[k as usize];
+            f.text(x + 32 - text_width(w, false) / 2, 105, w, fg);
+        }
     }
 
     fn draw_fans(&self, f: &mut Frame, t: u32, excite: f32) {

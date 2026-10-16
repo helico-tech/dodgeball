@@ -27,6 +27,8 @@ pub struct PlayerDef {
     pub style: usize,
     pub skin: (u32, u32),
     pub hair: (u32, u32),
+    /// cap, beanie or headband color (team accent when None)
+    pub cap: Option<(u32, u32)>,
 }
 
 pub struct TeamDef {
@@ -53,6 +55,8 @@ const BLACK: (u32, u32) = (rgb(56, 48, 72), rgb(24, 24, 40));
 const RED: (u32, u32) = (rgb(232, 88, 32), rgb(160, 48, 16));
 const PINK: (u32, u32) = (rgb(248, 104, 184), rgb(184, 48, 128));
 const LIME: (u32, u32) = (rgb(144, 248, 64), rgb(64, 168, 32));
+const CAP_BLACK: (u32, u32) = (rgb(56, 56, 80), rgb(24, 24, 40));
+const CAP_YELLOW: (u32, u32) = (rgb(248, 216, 48), rgb(192, 144, 16));
 
 pub const TEAMS: [TeamDef; 4] = [
     TeamDef {
@@ -66,9 +70,9 @@ pub const TEAMS: [TeamDef; 4] = [
         catch: 3,
         court: Court::Beach,
         players: [
-            PlayerDef { name: "RAD ROD", style: 0, skin: SKIN_LIGHT, hair: BLOND },
-            PlayerDef { name: "SURF SUE", style: 5, skin: SKIN_TAN, hair: BLOND },
-            PlayerDef { name: "KAHUNA", style: 1, skin: SKIN_DARK, hair: BLACK },
+            PlayerDef { name: "RAD ROD", style: 0, skin: SKIN_LIGHT, hair: BLOND, cap: None },
+            PlayerDef { name: "SURF SUE", style: 5, skin: SKIN_TAN, hair: RED, cap: None },
+            PlayerDef { name: "KAHUNA", style: 1, skin: SKIN_DARK, hair: BLACK, cap: None },
         ],
     },
     TeamDef {
@@ -82,25 +86,25 @@ pub const TEAMS: [TeamDef; 4] = [
         catch: 2,
         court: Court::Boardwalk,
         players: [
-            PlayerDef { name: "SNAKE", style: 2, skin: SKIN_TAN, hair: BLACK },
-            PlayerDef { name: "VINNIE", style: 4, skin: SKIN_LIGHT, hair: RED },
-            PlayerDef { name: "MAMBA", style: 0, skin: SKIN_DARK, hair: BLACK },
+            PlayerDef { name: "SNAKE", style: 2, skin: SKIN_TAN, hair: BLACK, cap: Some(CAP_BLACK) },
+            PlayerDef { name: "VINNIE", style: 4, skin: SKIN_LIGHT, hair: RED, cap: None },
+            PlayerDef { name: "MAMBA", style: 0, skin: SKIN_DARK, hair: BLACK, cap: None },
         ],
     },
     TeamDef {
         name: "POWDER PUNKS",
         short: "PUNKS",
         shirt: (rgb(64, 200, 248), rgb(32, 128, 200)),
-        pants: (rgb(232, 232, 248), rgb(152, 168, 208)),
+        pants: (rgb(200, 208, 240), rgb(136, 152, 200)),
         acc: (rgb(248, 72, 168), rgb(176, 32, 112)),
         power: 2,
         speed: 5,
         catch: 2,
         court: Court::Slopes,
         players: [
-            PlayerDef { name: "SHRED", style: 3, skin: SKIN_LIGHT, hair: BROWN },
-            PlayerDef { name: "YETI", style: 1, skin: SKIN_LIGHT, hair: BLOND },
-            PlayerDef { name: "FROSTY", style: 3, skin: SKIN_TAN, hair: BLACK },
+            PlayerDef { name: "SHRED", style: 3, skin: SKIN_LIGHT, hair: BROWN, cap: None },
+            PlayerDef { name: "YETI", style: 1, skin: SKIN_LIGHT, hair: BLOND, cap: Some(CAP_YELLOW) },
+            PlayerDef { name: "FROSTY", style: 5, skin: SKIN_TAN, hair: BLACK, cap: None },
         ],
     },
     TeamDef {
@@ -114,9 +118,9 @@ pub const TEAMS: [TeamDef; 4] = [
         catch: 5,
         court: Court::Skatepark,
         players: [
-            PlayerDef { name: "OLLIE", style: 4, skin: SKIN_TAN, hair: LIME },
-            PlayerDef { name: "GRIND", style: 2, skin: SKIN_DARK, hair: BLACK },
-            PlayerDef { name: "KICKFLIP", style: 5, skin: SKIN_LIGHT, hair: PINK },
+            PlayerDef { name: "OLLIE", style: 4, skin: SKIN_TAN, hair: LIME, cap: None },
+            PlayerDef { name: "GRIND", style: 2, skin: SKIN_DARK, hair: BLACK, cap: None },
+            PlayerDef { name: "KICKFLIP", style: 5, skin: SKIN_LIGHT, hair: PINK, cap: None },
         ],
     },
 ];
@@ -141,6 +145,9 @@ pub fn palette(team: usize, player: usize) -> Palette {
     pal[ACC_D as usize] = t.acc.1;
     pal[SHOE as usize] = rgb(248, 248, 248);
     pal[EYE as usize] = rgb(16, 16, 32);
+    let cap = p.cap.unwrap_or(t.acc);
+    pal[CAP as usize] = cap.0;
+    pal[CAP_D as usize] = cap.1;
     pal
 }
 
@@ -155,9 +162,13 @@ pub fn ghost_palette() -> Palette {
     pal
 }
 
-/// Flash palette for the hit frame.
-pub fn flash_palette() -> Palette {
-    let mut pal = [rgb(248, 248, 248); ROLES];
-    pal[OUT as usize] = rgb(248, 40, 40);
+/// Hit flash: the player's own colors washed toward white, outline kept.
+pub fn flash_palette(base: &Palette) -> Palette {
+    let mut pal = *base;
+    for (i, c) in pal.iter_mut().enumerate() {
+        if i != OUT as usize {
+            *c = crate::gfx::mix(*c, 0xFFFFFF, 0.6);
+        }
+    }
     pal
 }

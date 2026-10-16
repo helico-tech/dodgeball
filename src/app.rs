@@ -50,7 +50,7 @@ pub struct App {
     pub quit: bool,
     pub paused: bool,
     idle: u32,
-    count: i32,
+    pub count: i32,
     pub frame: u32,
     confetti: Vec<(f32, f32, f32, u32)>,
 }
@@ -373,6 +373,7 @@ impl App {
     fn draw_title(&self, f: &mut Frame, t: u32) {
         f.copy_from(&self.title_bg.bg);
         self.title_bg.draw_ambient(f, t, 0.0);
+        f.shade_rect(0, 0, W, 90, 3, 4);
         // logo drops in and bounces
         let st = self.t as i32;
         let drop = |target: i32, delay: i32| -> i32 {
@@ -410,13 +411,13 @@ impl App {
 
         if !self.menu_open {
             if (t / 24) % 2 == 0 && st > 36 {
-                f.text_grad_center(128, 192, "PUSH START", &grad7(rgb(248, 248, 248)), OUTLINE, true);
+                f.text_grad_center(128, 188, "PUSH START", &grad7(rgb(248, 248, 248)), OUTLINE, true);
             }
         } else {
-            f.shade_rect(72, 184, 112, 26, 1, 2);
-            f.rect_outline(72, 184, 112, 26, rgb(248, 176, 32));
+            f.shade_rect(72, 179, 112, 24, 1, 2);
+            f.rect_outline(72, 179, 112, 24, rgb(248, 176, 32));
             for (k, s) in ["1 PLAYER", "2 PLAYERS"].iter().enumerate() {
-                let y = 187 + k as i32 * 11;
+                let y = 181 + k as i32 * 11;
                 let sel = self.menu == k;
                 let col = if sel { rgb(248, 232, 64) } else { rgb(184, 184, 216) };
                 f.text_sh(100, y, s, col, OUTLINE, true);
@@ -457,14 +458,15 @@ impl App {
                     Pose::Stand
                 };
                 let s = self.bank.get(td.players[slot].style, pose);
-                blit(f, s, cx + 14 + slot as i32 * 22, cy + 66, false, &palette(k, slot));
+                blit(f, s, cx + 13 + slot as i32 * 20, cy + 66, false, &palette(k, slot));
             }
             for (r, (lab, v)) in [("POW", td.power), ("SPD", td.speed), ("CAT", td.catch)].iter().enumerate() {
                 let y = cy + 22 + r as i32 * 12;
-                f.text(cx + 78, y, lab, rgb(200, 200, 232));
+                f.text(cx + 68, y, lab, rgb(200, 200, 232));
                 for pip in 0..5 {
                     let c = if pip < *v { td.acc.0 } else { rgb(40, 40, 72) };
-                    f.rect(cx + 78 + pip * 7, y + 8, 5, 2, c);
+                    f.rect(cx + 87 + pip * 6, y, 6, 7, OUTLINE);
+                    f.rect(cx + 88 + pip * 6, y + 1, 4, 5, c);
                 }
             }
             f.text(cx + 5, cy + 76, td.court.name(), rgb(144, 152, 200));
@@ -476,9 +478,9 @@ impl App {
                     f.rect_outline(cx, cy, 120, 88, col);
                 }
                 let tag = if p == 0 { "1P" } else { "2P" };
-                let tx = if p == 0 { cx + 2 } else { cx + 106 };
-                f.rect(tx - 1, cy + 52, 14, 9, col);
-                f.text(tx, cy + 53, tag, rgb(16, 16, 48));
+                let tx = if p == 0 { cx + 88 } else { cx + 103 };
+                f.rect(tx - 1, cy + 59, 14, 9, col);
+                f.text(tx, cy + 60, tag, rgb(16, 16, 48));
                 if locked {
                     f.text_grad_center(cx + 60, cy + 40, "OK!", &grad7(col), OUTLINE, true);
                 }
@@ -520,7 +522,7 @@ impl App {
         f.text_grad(248 - wb + slide, 178, tb.name, &grad7(tb.shirt.0), OUTLINE, true);
         if self.t > 20 {
             let pulse = if self.t < 30 { 7 } else { 6 };
-            f.logo(128, 78, "VS", pulse, &SUNSET, OUTLINE, rgb(8, 8, 24));
+            f.logo(128, 44, "VS", pulse, &SUNSET, OUTLINE, rgb(8, 8, 24));
         }
         f.rect(0, 198, W, 26, rgb(8, 8, 32));
         f.hline(0, W - 1, 198, rgb(248, 176, 32));
@@ -555,7 +557,14 @@ impl App {
         let (cx, cy) = (128, 104);
         let gold = rgb(248, 200, 48);
         let gold_d = rgb(184, 120, 24);
+        f.shade_rect(0, 100, W, 10, 2, 3);
+        f.fill_ellipse(cx, cy - 30, 20, 8, OUTLINE);
+        f.fill_poly(&[(cx - 20, cy - 31), (cx + 20, cy - 31), (cx + 11, cy - 4), (cx - 11, cy - 4)], OUTLINE);
+        f.rect(cx - 15, cy + 1, 30, 12, OUTLINE);
+        f.circle_outline(cx - 20, cy - 22, 7, OUTLINE);
+        f.circle_outline(cx + 20, cy - 22, 7, OUTLINE);
         f.fill_ellipse(cx, cy - 30, 18, 6, gold_d);
+        f.fill_ellipse(cx, cy - 31, 15, 4, rgb(128, 72, 16));
         f.fill_poly(&[(cx - 18, cy - 30), (cx + 18, cy - 30), (cx + 10, cy - 6), (cx - 10, cy - 6)], gold);
         f.fill_poly(&[(cx + 4, cy - 30), (cx + 18, cy - 30), (cx + 10, cy - 6), (cx + 4, cy - 6)], gold_d);
         f.circle_outline(cx - 20, cy - 22, 6, gold);

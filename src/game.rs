@@ -258,6 +258,8 @@ pub enum FxKind {
     Star,
     Spark,
     Sweat,
+    /// big starburst at the point of contact
+    Impact,
 }
 
 #[derive(Clone, Debug)]
@@ -291,6 +293,10 @@ pub struct Banner {
     pub color: u32,
     /// pop in place instead of sliding in
     pub pop: bool,
+    /// screen y of the text top (None = centre of the court)
+    pub y: Option<i32>,
+    /// logo scale (0 = pick by length)
+    pub scale: i32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -332,6 +338,8 @@ pub struct Match {
     pub banner: Option<Banner>,
     pub shake: i32,
     pub hitstop: i32,
+    /// frames of full-screen flash (super shot release)
+    pub flash: i32,
     pub excite: f32,
     pub stats: Stats,
     pub winner: Option<usize>,
@@ -340,6 +348,7 @@ pub struct Match {
     /// frames left to show the coach's quote, and whose coach says it
     pub quote: i32,
     pub quote_team: usize,
+    ball_contact: (f32, f32, f32),
     round_t: u64,
 }
 
@@ -461,6 +470,7 @@ impl Match {
             banner: None,
             shake: 0,
             hitstop: 0,
+            flash: 0,
             excite: 0.0,
             stats: Stats::default(),
             winner: None,
@@ -468,6 +478,7 @@ impl Match {
             coaches: [Coach::default(); 2],
             quote: 0,
             quote_team: 0,
+            ball_contact: (0.0, 0.0, 0.0),
             round_t: 0,
         };
         m.reset_round();
@@ -481,8 +492,9 @@ impl Match {
     fn reset_round(&mut self) {
         for p in self.players.iter_mut() {
             let (lo, hi) = side_bounds(p.team);
-            p.x = if p.team == 0 { lo + 10.0 } else { hi - 10.0 };
-            p.y = 12.0 + p.slot as f32 * 24.0;
+            let k = p.slot as f32 * 14.0;
+            p.x = if p.team == 0 { lo + 10.0 + k } else { hi - 10.0 - k };
+            p.y = 10.0 + p.slot as f32 * 26.0;
             p.z = 0.0;
             p.vx = 0.0;
             p.vy = 0.0;
@@ -523,7 +535,7 @@ impl Match {
     }
 
     fn banner(&mut self, text: impl Into<String>, dur: i32, color: u32) {
-        self.banner = Some(Banner { text: text.into(), t: 0, dur, color, pop: false });
+        self.banner = Some(Banner { text: text.into(), t: 0, dur, color, pop: false, y: None, scale: 0 });
     }
 
     fn popup(&mut self, x: f32, y: f32, z: f32, text: &'static str, color: u32) {
@@ -564,6 +576,9 @@ impl Match {
             if let Ctrl::Human(pi) = self.sides[t].ctrl {
                 human[t] = self.human_intent(t, pads[pi]);
             }
+        }
+        if self.flash > 0 {
+            self.flash -= 1;
         }
         if self.hitstop > 0 {
             self.hitstop -= 1;
@@ -690,7 +705,8 @@ impl Match {
             f.x += f.vx;
             f.y += f.vy;
             f.z += f.vz;
-            if f.kind != FxKind::Dust {
+            if f.kind == FxKind::Impact {
+            } else if f.kind != FxKind::Dust {
                 f.vz -= 0.12;
             } else {
                 f.vx *= 0.9;
@@ -1312,7 +1328,13 @@ impl Match {
             Shot::Super => {
                 self.stats.supers += 1;
                 self.sfx.push(Sfx::Super);
+                // up in the sky, so the shot itself stays in view
                 self.banner("SUPER SHOT!", 40, rgb(248, 120, 32));
+                if let Some(b) = self.banner.as_mut() {
+                    b.y = Some(40);
+                    b.scale = 2;
+                }
+                self.flash = 2;
                 self.excite = (self.excite + 0.6).min(1.0);
                 self.shake = self.shake.max(4);
             }
@@ -1407,7 +1429,7 @@ impl Match {
                 b.z += b.vz;
                 b.spin += b.vx * 0.3;
                 b.trail.push((b.x, b.y, b.z));
-                if b.trail.len() > 8 {
+                if b.trail.len() > 14 {
                     b.trail.remove(0);
                 }
                 if b.shot == Shot::Pass {
@@ -1691,6 +1713,7 @@ impl Match {
     }
 
     fn hit(&mut self, j: usize) {
+        self.ball_contact = (self.ball.x, self.ball.y, self.ball.z);
         let shot = self.ball.shot;
         let big = shot == Shot::Super;
         let dmg = if big { 2 } else { 1 };
@@ -1720,6 +1743,8 @@ impl Match {
         self.popup(x, y, z + 30.0, if big { "WHAM!" } else { "POW!" }, rgb(248, 232, 64));
         self.stars(x, y, z + 14.0, if big { 10 } else { 6 }, FxKind::Star);
         self.fx.push(Fx { x, y, z: z + 26.0, vx: -push * 0.5, vy: 0.0, vz: 1.2, life: 30, max: 30, kind: FxKind::Sweat, color: 0 });
+        let (bx, by, bz) = (self.ball_contact.0, self.ball_contact.1, self.ball_contact.2);
+        self.fx.push(Fx { x: bx, y: by + 0.5, z: bz, vx: 0.0, vy: 0.0, vz: 0.0, life: 7, max: 7, kind: FxKind::Impact, color: 0 });
         self.excite = (self.excite + 0.5).min(1.0);
         self.stats.hits += 1;
     }

@@ -250,17 +250,22 @@ impl Frame {
     // ---------------------------------------------------------------- text
 
     fn text_core(&mut self, x: i32, y: i32, s: &str, bold: bool, mut col: impl FnMut(i32) -> u32) {
-        let adv = if bold { 7 } else { 6 };
+        let adv = if bold { 8 } else { 6 };
         let mut cx = x;
         for ch in s.chars() {
             if let Some(g) = glyph(ch.to_ascii_uppercase()) {
                 for (gy, row) in g.iter().enumerate() {
                     let c = col(gy as i32);
-                    for (gx, b) in row.bytes().enumerate() {
-                        if b == b'#' {
-                            self.set(cx + gx as i32, y + gy as i32, c);
-                            if bold {
-                                self.set(cx + gx as i32 + 1, y + gy as i32, c);
+                    if bold {
+                        for (gx, on) in bold_row(row).iter().enumerate() {
+                            if *on {
+                                self.set(cx + gx as i32, y + gy as i32, c);
+                            }
+                        }
+                    } else {
+                        for (gx, b) in row.bytes().enumerate() {
+                            if b == b'#' {
+                                self.set(cx + gx as i32, y + gy as i32, c);
                             }
                         }
                     }
@@ -313,15 +318,32 @@ impl Frame {
         let mut m = vec![false; (mw * mh) as usize];
         for (i, ch) in s.chars().enumerate() {
             let Some(g) = glyph(ch.to_ascii_uppercase()) else { continue };
+            let on = |x: i32, y: i32| -> bool {
+                x >= 0 && y >= 0 && x < 5 && y < 7 && g[y as usize].as_bytes()[x as usize] == b'#'
+            };
+            let k = (scale + 1) / 2;
             for (gy, row) in g.iter().enumerate() {
                 for (gx, b) in row.bytes().enumerate() {
                     if b != b'#' {
                         continue;
                     }
+                    let (cx, cy) = (gx as i32, gy as i32);
+                    let (u, d, l, r) = (on(cx, cy - 1), on(cx, cy + 1), on(cx - 1, cy), on(cx + 1, cy));
+                    let (ul, ur, dl, dr) = (on(cx - 1, cy - 1), on(cx + 1, cy - 1), on(cx - 1, cy + 1), on(cx + 1, cy + 1));
+                    // round a corner only where the outline steps diagonally (O, C, S),
+                    // so D, B and E keep their square corners
+                    let tl = !u && !l && (dl || ur);
+                    let tr = !u && !r && (dr || ul);
+                    let bl = !d && !l && (ul || dr);
+                    let br = !d && !r && (ur || dl);
                     for by in 0..scale {
                         // italic: shift every pixel row, so strokes stay connected
                         let shear = (7 * scale - (gy as i32 * scale + by)) / 3;
                         for bx in 0..scale {
+                            let (ix, iy) = (scale - 1 - bx, scale - 1 - by);
+                            if (tl && bx + by < k) || (tr && ix + by < k) || (bl && bx + iy < k) || (br && ix + iy < k) {
+                                continue;
+                            }
                             let px = pad + i as i32 * adv + gx as i32 * scale + bx + shear;
                             let py = pad + gy as i32 * scale + by;
                             m[(py * mw + px) as usize] = true;
@@ -332,13 +354,15 @@ impl Frame {
         }
         let at = |x: i32, y: i32| x >= 0 && y >= 0 && x < mw && y < mh && m[(y * mw + x) as usize];
         let ox = cx - mw / 2;
-        // outline mask: dilate by 2
+        // outline mask: dilate by 2 (by 1 for small text)
+        let reach = if scale <= 2 { 2 } else { 5 };
+        let so = if scale <= 2 { 1 } else { 3 };
         let mut o = vec![false; (mw * mh) as usize];
         for py in 0..mh {
             for px in 0..mw {
                 'n: for dy in -2..=2 {
                     for dx in -2..=2 {
-                        if (dx * dx + dy * dy) <= 5 && at(px + dx, py + dy) {
+                        if (dx * dx + dy * dy) <= reach && at(px + dx, py + dy) {
                             o[(py * mw + px) as usize] = true;
                             break 'n;
                         }
@@ -349,7 +373,7 @@ impl Frame {
         for py in 0..mh {
             for px in 0..mw {
                 if o[(py * mw + px) as usize] {
-                    self.set(ox + px + 3, y + py + 3, shadow);
+                    self.set(ox + px + so, y + py + so, shadow);
                 }
             }
         }
@@ -384,8 +408,21 @@ pub fn text_width(s: &str, bold: bool) -> i32 {
     if n == 0 {
         0
     } else {
-        n * if bold { 7 } else { 6 } - 1
+        n * if bold { 8 } else { 6 } - 1
     }
+}
+
+/// Widen a 5-pixel glyph row to 7 for the bold font: the outer columns get
+/// 2px stems, lone middle strokes get thickened, and 1px gaps stay open.
+fn bold_row(row: &str) -> [bool; 7] {
+    let b: Vec<bool> = row.bytes().map(|c| c == b'#').collect();
+    let mut m = [b[0], b[0], b[1], b[2], b[3], b[4], b[4]];
+    for i in 2..=4 {
+        if m[i] && !m[i - 1] && !m[i + 1] && (i + 2 >= 7 || !m[i + 2]) {
+            m[i + 1] = true;
+        }
+    }
+    m
 }
 
 pub fn glyph(c: char) -> Option<[&'static str; 7]> {
@@ -416,8 +453,8 @@ pub fn glyph(c: char) -> Option<[&'static str; 7]> {
         'X' => ["#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"],
         'Y' => ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
         'Z' => ["#####", "....#", "...#.", "..#..", ".#...", "#....", "#####"],
-        '0' => [".###.", "#...#", "#..##", "#.#.#", "##..#", "#...#", ".###."],
-        '1' => ["..#..", ".##..", "..#..", "..#..", "..#..", "..#..", ".###."],
+        '0' => [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+        '1' => ["..#..", ".##..", "#.#..", "..#..", "..#..", "..#..", "#####"],
         '2' => [".###.", "#...#", "....#", "...#.", "..#..", ".#...", "#####"],
         '3' => ["#####", "...#.", "..#..", "...#.", "....#", "#...#", ".###."],
         '4' => ["...#.", "..##.", ".#.#.", "#..#.", "#####", "...#.", "...#."],

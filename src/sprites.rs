@@ -27,7 +27,9 @@ pub const ACC: u8 = 11;
 pub const ACC_D: u8 = 12;
 pub const SHOE: u8 = 13;
 pub const EYE: u8 = 14;
-pub const ROLES: usize = 15;
+pub const CAP: u8 = 15;
+pub const CAP_D: u8 = 16;
+pub const ROLES: usize = 17;
 
 pub type Palette = [u32; ROLES];
 
@@ -83,6 +85,24 @@ impl Sprite {
             }
         }
     }
+    /// Outline a stroke, but only where it lies over the darker back limbs,
+    /// so the front arm and leg stay separate from them.
+    fn halo(&mut self, a: (i32, i32), b: (i32, i32), size: i32) {
+        let lo = -(size / 2);
+        let hi = lo + size;
+        let mut pts = Vec::new();
+        line_points(a.0, a.1, b.0, b.1, |x, y| pts.push((x, y)));
+        for (x, y) in pts {
+            for dy in lo..hi {
+                for dx in lo..hi {
+                    if matches!(self.get(x + dx, y + dy), SKIN_D | PANTS_D | ACC_D | SHIRT_D) {
+                        self.set(x + dx, y + dy, OUT);
+                    }
+                }
+            }
+        }
+    }
+
     /// Add a 1px black outline around the silhouette.
     fn outline(&mut self) {
         let src = self.px.clone();
@@ -120,8 +140,8 @@ fn role_of(ch: u8) -> u8 {
         b't' => SHIRT_D,
         b'P' => PANTS,
         b'W' => WHITE,
-        b'C' => ACC,
-        b'c' => ACC_D,
+        b'C' => CAP,
+        b'c' => CAP_D,
         b'K' => EYE,
         _ => T,
     }
@@ -172,7 +192,7 @@ type Skel = [(i32, i32); 11];
 
 fn skel(p: Pose) -> Skel {
     match p {
-        Pose::Stand => [(12, 5), (12, 10), (12, 19), (8, 15), (8, 20), (15, 15), (15, 20), (11, 24), (11, 29), (13, 24), (13, 29)],
+        Pose::Stand => [(12, 5), (12, 10), (12, 19), (8, 15), (8, 20), (16, 15), (16, 20), (10, 24), (10, 29), (14, 24), (14, 29)],
         Pose::Run1 => [(14, 6), (13, 11), (12, 19), (15, 14), (18, 12), (10, 15), (8, 18), (9, 24), (6, 27), (16, 23), (17, 29)],
         Pose::Run2 => [(14, 5), (13, 10), (12, 18), (12, 15), (13, 19), (14, 15), (15, 19), (11, 23), (9, 27), (14, 23), (13, 29)],
         Pose::Run3 => [(14, 6), (13, 11), (12, 19), (10, 15), (8, 18), (16, 14), (19, 12), (16, 23), (17, 29), (9, 24), (6, 27)],
@@ -180,12 +200,12 @@ fn skel(p: Pose) -> Skel {
         Pose::Hold => [(12, 5), (12, 10), (12, 19), (14, 15), (17, 15), (16, 16), (18, 15), (10, 24), (9, 29), (14, 24), (15, 29)],
         Pose::WindUp => [(10, 5), (11, 10), (12, 19), (15, 13), (18, 12), (8, 10), (5, 7), (9, 24), (7, 29), (15, 24), (17, 29)],
         Pose::Throw => [(15, 6), (14, 11), (12, 19), (9, 14), (7, 17), (18, 12), (21, 12), (9, 24), (6, 28), (16, 24), (18, 29)],
-        Pose::Catch => [(12, 7), (12, 12), (11, 20), (16, 16), (19, 14), (17, 15), (20, 13), (9, 25), (8, 29), (15, 25), (15, 29)],
-        Pose::Jump => [(12, 4), (12, 9), (12, 18), (9, 6), (8, 3), (15, 6), (17, 3), (15, 21), (11, 25), (17, 20), (14, 25)],
+        Pose::Catch => [(10, 8), (11, 13), (12, 21), (16, 17), (19, 17), (17, 13), (20, 12), (9, 25), (7, 29), (16, 25), (17, 29)],
+        Pose::Jump => [(12, 4), (12, 9), (12, 18), (8, 12), (5, 10), (16, 9), (19, 6), (15, 21), (11, 25), (17, 20), (14, 25)],
         Pose::JumpWind => [(11, 4), (12, 9), (12, 18), (15, 11), (18, 10), (9, 6), (6, 3), (15, 21), (11, 25), (17, 20), (14, 25)],
         Pose::Hit => [(8, 8), (10, 12), (13, 19), (12, 8), (14, 5), (13, 10), (16, 7), (14, 24), (16, 28), (16, 23), (19, 26)],
         Pose::Down => [(5, 25), (9, 27), (17, 27), (10, 23), (12, 21), (12, 30), (15, 30), (20, 24), (23, 27), (21, 27), (23, 29)],
-        Pose::Victory => [(12, 5), (12, 10), (12, 19), (9, 7), (7, 3), (15, 7), (17, 3), (10, 24), (9, 29), (14, 24), (15, 29)],
+        Pose::Victory => [(12, 5), (12, 10), (12, 19), (8, 7), (4, 2), (16, 7), (20, 2), (10, 24), (9, 29), (14, 24), (15, 29)],
         // crouched, hands over the head
         Pose::Duck => [(13, 15), (12, 20), (10, 25), (15, 15), (16, 11), (17, 16), (17, 11), (15, 25), (12, 29), (16, 26), (16, 29)],
         // flat out, arms first
@@ -209,32 +229,32 @@ fn head(style: usize) -> [&'static str; 10] {
     match style {
         // spiky
         0 => [
-            "..H.H.H...", ".HHHHHHH..", "HHHHHHHHH.", ".HHHHHHHH.", ".HHhSSSSS.", ".HhsSSSKS.", ".HsSSSSSSS", "..sSSSSSS.",
+            "..H.H.H...", ".HHHHHHH..", "HHHHHHHHH.", ".HHHHHHHH.", ".HHhSSSSS.", ".HhsSSSKS.", ".HsSSSSKSS", "..sSSSSSS.",
             "..sSSSSsS.", "...sSSSS..",
         ],
         // long hair with headband
         1 => [
-            "...HHHH...", "..HHHHHHH.", ".HHHHHHHHH", ".CCCCCCCCC", "HHHHSSSSS.", "HHhsSSSKS.", "HHsSSSSSSS", "HHhSSSSSS.",
+            "...HHHH...", "..HHHHHHH.", ".HHHHHHHHH", ".CCCCCCCCC", "HHHHSSSSS.", "HHhsSSSKS.", "HHsSSSSKSS", "HHhSSSSSS.",
             "HH.sSSSsS.", "H...sSSS..",
         ],
         // cap with brim forward
         2 => [
-            "..........", "...CCCCC..", "..CCCCCCC.", ".cCCWCCCC.", ".hcccCCCCC", ".HhsSSSKS.", ".hsSSSSSSS", "..sSSSSSS.",
+            "..........", "...CCCCC..", "..CCCCCCC.", ".cCCWCCCC.", ".hcccCCCCC", ".HhsSSSKS.", ".hsSSSSKSS", "..sSSSSSS.",
             "..sSSSSsS.", "...sSSSS..",
         ],
         // beanie with pom-pom
         3 => [
-            "....WW....", "...CCCC...", "..CCCCCC..", ".CCCCCCCC.", ".cWcWcWcW.", ".HhsSSSKS.", ".hsSSSSSSS", "..sSSSSSS.",
+            "....WW....", "...CCCC...", "..CCCCCC..", ".CCCCCCCC.", ".cWcWcWcW.", ".HhsSSSKS.", ".hsSSSSKSS", "..sSSSSSS.",
             "..sSSSSsS.", "...sSSSS..",
         ],
         // mohawk
         4 => [
-            "...HHH....", "....HHHH..", "....HHHH..", "..sSHHSS..", ".sSSSSSSS.", ".sSSSSSKS.", ".sSSSSSSSS", "..sSSSSSS.",
+            "...HHH....", "....HHHH..", "....HHHH..", "..sSHHSS..", ".sSSSSSSS.", ".sSSSSSKS.", ".sSSSSSKSS", "..sSSSSSS.",
             "..sSSSSsS.", "...sSSSS..",
         ],
         // ponytail
         _ => [
-            "...HHHH...", "..HHHHHHH.", ".HHHHHHHHH", "HHHHHHHHH.", "HhHhSSSSS.", "Hh.sSSSKS.", "Hh.SSSSSSS", "h..SSSSSS.",
+            "...HHHH...", "..HHHHHHH.", ".HHHHHHHHH", "HHHHHHHHH.", "HhHhSSSSS.", "Hh.sSSSKS.", "Hh.SSSSKSS", "h..SSSSSS.",
             "...sSSSsS.", "....sSSS..",
         ],
     }
@@ -269,7 +289,7 @@ fn render(pose: Pose, style: usize) -> Sprite {
     s.thick(bkn, bft, 2, SKIN_D);
     shoe(&mut s, bft, ACC_D);
     // torso
-    s.thick((neck.0, neck.1 + 1), hip, 6, SHIRT);
+    s.thick((neck.0, neck.1 + 1), hip, 7, SHIRT);
     if down {
         s.thick((neck.0 + 1, neck.1 + 2), (hip.0 - 2, hip.1 + 2), 1, SHIRT_D);
     } else {
@@ -277,8 +297,10 @@ fn render(pose: Pose, style: usize) -> Sprite {
         s.thick((neck.0 - 3, neck.1 + 2), (hip.0 - 3, hip.1 - 2), 1, SHIRT_D);
         s.thick((neck.0 - 2, neck.1 + 5), (neck.0 + 2, neck.1 + 5), 1, ACC);
     }
-    s.thick(hip, hip, 6, PANTS);
-    // front leg
+    s.thick(hip, hip, 7, PANTS);
+    // front leg, with a dark edge where it crosses the back limbs
+    s.halo(fhip, fkn, 5);
+    s.halo(fkn, fft, 4);
     s.thick(fhip, fkn, 3, PANTS);
     s.thick(fkn, fft, 2, SKIN);
     shoe(&mut s, fft, ACC);
@@ -286,6 +308,8 @@ fn render(pose: Pose, style: usize) -> Sprite {
     let rows = head(style);
     s.stamp(hd.0 - 5, hd.1 - 5, &rows, pose == Pose::Down);
     // front arm
+    s.halo(fsh, fel, 4);
+    s.halo(fel, fha, 4);
     s.thick(fsh, fel, 2, SKIN);
     s.thick(fel, fha, 2, SKIN);
     s.thick(fsh, mid(fsh, fel), 3, SHIRT);

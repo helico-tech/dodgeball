@@ -203,6 +203,7 @@ pub fn shots(out: &str) {
     snap(&app, dir, "14_champion.png");
     app.scene = Scene::Continue;
     app.t = 0;
+    app.count = 9;
     run(&mut app, 70);
     snap(&app, dir, "15_continue.png");
 

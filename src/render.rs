@@ -217,11 +217,28 @@ pub fn draw_match(f: &mut Frame, m: &Match, sc: &Scenery, bank: &SpriteBank, t: 
             }
             Item::Ball => {
                 if b.state == BallState::Flying && b.shot == Shot::Super {
-                    for (k, &(x, y, z)) in b.trail.iter().enumerate() {
-                        let (sx, sy) = proj(x, y, z);
-                        let r = 1 + k as i32 / 3;
-                        let c = [rgb(176, 32, 48), rgb(232, 72, 32), rgb(248, 160, 32), rgb(248, 232, 96)][(k * 4 / b.trail.len().max(1)).min(3)];
+                    let n = b.trail.len().max(1);
+                    let pts: Vec<(i32, i32, i32)> = b
+                        .trail
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &(x, y, z))| {
+                            let (sx, sy) = proj(x, y, z);
+                            (sx, sy, 1 + (k * 4 / n) as i32)
+                        })
+                        .collect();
+                    for &(sx, sy, r) in &pts {
+                        f.fill_ellipse(sx, sy, r + 1, r + 1, OUTLINE);
+                    }
+                    for (k, &(sx, sy, r)) in pts.iter().enumerate() {
+                        let c = [rgb(176, 32, 48), rgb(232, 72, 32), rgb(248, 160, 32), rgb(248, 232, 96)][(k * 4 / n).min(3)];
                         f.fill_ellipse(sx, sy, r, r, c);
+                    }
+                    let (sx, sy) = proj(b.x, b.y, b.z);
+                    let back = if b.vx > 0.0 { -1 } else { 1 };
+                    for dy in [-4, 4] {
+                        let wob = ((t as i32 + dy) / 2) % 3;
+                        f.hline(sx + back * (6 + wob), sx + back * (16 + wob), sy + dy, rgb(248, 232, 96));
                     }
                 } else if b.state == BallState::Flying && b.shot == Shot::Dash {
                     for (k, &(x, y, z)) in b.trail.iter().enumerate().step_by(2) {
@@ -275,6 +292,27 @@ pub fn draw_match(f: &mut Frame, m: &Match, sc: &Scenery, bank: &SpriteBank, t: 
                 f.set(sx, sy, rgb(248, 248, 248));
                 f.set(sx + 1, sy, rgb(120, 248, 120));
             }
+            FxKind::Impact => {
+                // starburst: rays shrink after the first frames
+                let age = fx.max - fx.life;
+                let len = if age < 3 { 7 } else { 7 - (age - 2) * 2 };
+                if len > 1 {
+                    for k in 0..8 {
+                        let a = k as f32 / 8.0 * std::f32::consts::TAU + 0.2;
+                        let l = if k % 2 == 0 { len } else { len * 2 / 3 };
+                        let (ex, ey) = (sx + (a.cos() * l as f32) as i32, sy + (a.sin() * l as f32) as i32);
+                        f.thick_line(sx, sy, ex, ey, 3, OUTLINE);
+                    }
+                    for k in 0..8 {
+                        let a = k as f32 / 8.0 * std::f32::consts::TAU + 0.2;
+                        let l = if k % 2 == 0 { len } else { len * 2 / 3 };
+                        let (ex, ey) = (sx + (a.cos() * l as f32) as i32, sy + (a.sin() * l as f32) as i32);
+                        f.thick_line(sx, sy, ex, ey, 1, rgb(248, 232, 64));
+                        f.set(ex, ey, rgb(248, 136, 32));
+                    }
+                    f.fill_ellipse(sx, sy, 2, 2, rgb(248, 248, 248));
+                }
+            }
             FxKind::Sweat => {
                 f.set(sx, sy, rgb(160, 216, 248));
                 f.set(sx, sy + 1, rgb(96, 168, 232));
@@ -302,6 +340,9 @@ pub fn draw_match(f: &mut Frame, m: &Match, sc: &Scenery, bank: &SpriteBank, t: 
         }
     }
 
+    if m.flash > 0 {
+        f.shade_rect(0, 33, W, H - 33, 5, 4);
+    }
     draw_hud(f, m, bank, t);
     if let Some(bn) = &m.banner {
         draw_banner(f, bn);
@@ -349,7 +390,8 @@ fn draw_player(f: &mut Frame, m: &Match, bank: &SpriteBank, i: usize, t: u32) {
     let s = bank.get(def.style, pose);
     let (sx, sy) = proj(p.x, p.y, p.z);
     let flip = p.face < 0.0;
-    let pal = if p.flash > 0 && (p.flash / 2) % 2 == 1 { flash_palette() } else { palette(team, p.slot) };
+    let base = palette(team, p.slot);
+    let pal = if p.flash > 4 { flash_palette(&base) } else { base };
     if p.fired_up {
         for k in 0..6u32 {
             let ph = (t + k * 7) % 24;
@@ -384,10 +426,11 @@ fn draw_player(f: &mut Frame, m: &Match, bank: &SpriteBank, i: usize, t: u32) {
                 let bob = ((t / 8) % 2) as i32;
                 let col = if pi == 0 { rgb(248, 232, 64) } else { rgb(96, 224, 248) };
                 let label = if pi == 0 { "1P" } else { "2P" };
-                let y = sy - 40 - bob;
-                f.text_sh(sx - 5, y, label, col, OUTLINE, false);
+                let y = sy - 44 - bob;
+                f.text_grad(sx - 7, y, label, &grad7(col), OUTLINE, true);
                 for k in 0..3 {
-                    f.hline(sx - 2 + k, sx + 2 - k, y + 9 + k, col);
+                    f.hline(sx - 3 + k, sx + 3 - k, y + 8 + k, OUTLINE);
+                    f.hline(sx - 2 + k, sx + 2 - k, y + 8 + k, col);
                 }
             }
         }
@@ -440,14 +483,16 @@ pub fn draw_hud(f: &mut Frame, m: &Match, bank: &SpriteBank, t: u32) {
     let low = secs <= 10 && m.phase == Phase::Play;
     let col = if low && (t / 8) % 2 == 0 { rgb(248, 56, 56) } else { rgb(248, 224, 72) };
     f.text_center(128, 2, "TIME", rgb(160, 168, 216), OUTLINE, false);
-    f.logo(128, 9, &txt, 2, &grad6(col), OUTLINE, rgb(8, 8, 24));
+    f.logo(128, 8, &txt, 2, &grad6(col), OUTLINE, rgb(8, 8, 24));
 }
 
 pub fn draw_banner(f: &mut Frame, b: &Banner) {
     let n = b.text.chars().count() as i32;
-    let scale = if n * 18 < 236 { 3 } else { 2 };
+    let scale = if b.scale > 0 { b.scale } else if n * 18 < 236 { 3 } else { 2 };
     let target = 128;
-    let (x, y) = if b.pop {
+    let (x, y) = if let Some(y) = b.y {
+        (if b.t < 6 { target + (6 - b.t) * 40 } else { target }, y)
+    } else if b.pop {
         (target, 120 - 7 * scale / 2 - if b.t < 4 { 4 - b.t } else { 0 })
     } else {
         let x = if b.t < 10 { target + (10 - b.t) * 30 } else { target };
