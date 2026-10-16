@@ -12,9 +12,12 @@ or 2P versus. All art and sound are generated in code.
   screen, key moments and a sprite sheet. Use this to review visuals.
 
 ## Controls
-- P1: arrows, Z throw/catch, X jump, C pass, Enter start/pause.
-- P2: WASD, F throw/catch, G jump, H pass, Tab start/pause.
-- Double-tap left/right to run. Throw at the top of a jump = super shot.
+- P1: arrows, Z (or ,) throw/catch, X (or .) jump, C (or /) pass/duck,
+  Enter start/pause.
+- P2: WASD, F throw/catch, G jump, H pass/duck, Tab start/pause.
+- Double-tap left/right to run. Throw at the very top of a jump = super
+  shot. Jump while running = dive. Pass key without the ball = duck.
+- Hold the ball over 5 s and it goes to the other side (shot clock).
 - Esc: back to title (quits on the title). F1: scanlines on/off.
 
 ## Map

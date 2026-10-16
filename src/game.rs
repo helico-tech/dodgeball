@@ -6,7 +6,7 @@ use crate::gfx::rgb;
 use crate::teams::{Court, TeamDef, TEAMS};
 
 pub const TEAM_SIZE: usize = 3;
-pub const MAX_HP: i32 = 4;
+pub const MAX_HP: i32 = 3;
 pub const DEPTH: f32 = 72.0;
 pub const COURT_TOP: f32 = 112.0;
 pub const MID: f32 = 128.0;
@@ -138,6 +138,8 @@ pub struct Ai {
     wx: f32,
     wy: f32,
     fetch: i32,
+    /// press catch when the ball is this many frames away
+    catch_at: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -164,6 +166,16 @@ pub struct Player {
     pub aim: f32,
     /// dodged the coach's wrench: next throw is a free super shot
     pub fired_up: bool,
+    /// after catching a hard shot: frames before you can throw
+    pub recoil: i32,
+    /// this jump started from a run (wider super-shot window)
+    pub run_jump: bool,
+    /// a wrench hit: stagger back up instead of going down
+    pub stagger: bool,
+    /// how much this player likes to duck; the CPU learns to throw low
+    pub duck_habit: f32,
+    /// how often this player catches; the CPU answers with faster shots
+    pub catch_habit: f32,
     ai: Ai,
 }
 
@@ -218,6 +230,9 @@ pub struct Wrench {
     pub live: bool,
     pub judged: bool,
     pub t: i32,
+    /// where it was aimed (drawn as a warning marker)
+    pub tx: f32,
+    pub ty: f32,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -227,6 +242,8 @@ pub struct Coach {
     pub warn: i32,
     /// frames left of the throw follow-through
     pub throw_t: i32,
+    /// wrenches thrown this round
+    pub count: i32,
 }
 
 pub fn coach_pos(team: usize) -> (f32, f32) {
@@ -250,6 +267,9 @@ pub struct Side {
     tap_dir: i32,
     tap_t: u64,
     run_dir: i32,
+    /// sim time of the last press of throw, jump, pass (input buffer)
+    buf: [i64; 3],
+    seen_ball: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -350,10 +370,16 @@ pub struct Match {
     pub quote_team: usize,
     ball_contact: (f32, f32, f32),
     round_t: u64,
+    /// simulation time: stands still during hit-stop
+    sim_t: i64,
+    /// frames the current holder has had the ball (shot clock)
+    pub hold_t: i32,
+    hold_by: usize,
+    sudden: bool,
 }
 
 fn catch_window(catch: i32) -> i32 {
-    9 + (catch - 3) * 2
+    7 + (catch - 3)
 }
 
 fn windup_frames(s: Shot) -> i32 {
@@ -409,6 +435,8 @@ impl Match {
             tap_dir: 0,
             tap_t: 0,
             run_dir: 0,
+            buf: [-100; 3],
+            seen_ball: 0,
         };
         let players = (0..TEAM_SIZE * 2)
             .map(|i| Player {
@@ -433,6 +461,11 @@ impl Match {
                 flash: 0,
                 aim: 0.0,
                 fired_up: false,
+                recoil: 0,
+                run_jump: false,
+                stagger: false,
+                duck_habit: 0.0,
+                catch_habit: 0.0,
                 ai: Ai::default(),
             })
             .collect();
@@ -480,6 +513,10 @@ impl Match {
             quote_team: 0,
             ball_contact: (0.0, 0.0, 0.0),
             round_t: 0,
+            sim_t: 0,
+            hold_t: 0,
+            hold_by: usize::MAX,
+            sudden: false,
         };
         m.reset_round();
         m
@@ -507,12 +544,14 @@ impl Match {
             p.catch_cd = 0;
             p.ghost = 0.0;
             p.fired_up = false;
+            p.recoil = 0;
+            p.stagger = false;
             p.ai = Ai { fetch: 0, ..Ai::default() };
         }
         self.wrench = None;
         self.quote = 0;
         for c in self.coaches.iter_mut() {
-            *c = Coach { cooldown: 300, ..Coach::default() };
+            *c = Coach { cooldown: 600, ..Coach::default() };
         }
         let b = &mut self.ball;
         b.x = MID;
@@ -529,8 +568,11 @@ impl Match {
         self.phase_t = 0;
         self.time = ROUND_SECS * 60;
         self.round_t = 0;
+        self.hold_t = 0;
+        self.sudden = false;
         for t in 0..2 {
             self.sides[t].control = t * TEAM_SIZE + 1;
+            self.sides[t].buf = [-100; 3];
         }
     }
 
@@ -584,6 +626,7 @@ impl Match {
             self.hitstop -= 1;
             return;
         }
+        self.sim_t += 1;
         if self.shake > 0 {
             self.shake -= 1;
         }
@@ -636,6 +679,7 @@ impl Match {
                 self.step_world(Some(()), &human);
                 self.update_coaches();
                 self.update_wrench();
+                self.shot_clock();
                 self.check_round_end();
             }
             Phase::RoundOver => {
@@ -651,7 +695,7 @@ impl Match {
                         self.sfx.push(Sfx::Cheer);
                         self.excite = 1.0;
                         for p in self.players.iter_mut() {
-                            if p.team == w {
+                            if p.team == w && p.state != PState::Out {
                                 p.state = PState::Victory;
                                 p.hp = p.hp.max(1);
                                 p.t = 0;
@@ -691,7 +735,17 @@ impl Match {
             self.rng = rng;
         }
         for (i, it) in intents.iter().enumerate() {
-            self.apply(i, *it);
+            let team = self.players[i].team;
+            let is_human = play.is_some() && matches!(self.sides[team].ctrl, Ctrl::Human(_)) && self.sides[team].control == i;
+            let it = if is_human { self.buffered(team, *it) } else { *it };
+            let used = self.apply(i, it);
+            if is_human {
+                for k in 0..3 {
+                    if used & (1 << k) != 0 {
+                        self.sides[team].buf[k] = -100;
+                    }
+                }
+            }
         }
         self.update_ball();
         if play.is_some() {
@@ -734,6 +788,12 @@ impl Match {
         side.prev = pad;
         let mx = (pad.right as i32 - pad.left as i32) as f32;
         let my = (pad.down as i32 - pad.up as i32) as f32;
+        // remember presses for a few frames, so an early press still counts
+        for (k, (now, was)) in [(pad.a, prev.a), (pad.b, prev.b), (pad.c, prev.c)].into_iter().enumerate() {
+            if now && !was {
+                side.buf[k] = self.sim_t;
+            }
+        }
         for (pressed, dir) in [(pad.left && !prev.left, -1), (pad.right && !prev.right, 1)] {
             if pressed {
                 if side.tap_dir == dir && frame - side.tap_t < 15 {
@@ -750,10 +810,20 @@ impl Match {
             mx,
             my,
             run: side.run_dir != 0,
-            throw: pad.a && !prev.a,
-            jump: pad.b && !prev.b,
-            pass: pad.c && !prev.c,
+            throw: false,
+            jump: false,
+            pass: false,
         }
+    }
+
+    /// Fill in buffered button presses for the human-controlled player.
+    fn buffered(&self, team: usize, mut it: Intent) -> Intent {
+        const BUFFER: i64 = 7;
+        let b = self.sides[team].buf;
+        it.throw = self.sim_t - b[0] <= BUFFER;
+        it.jump = self.sim_t - b[1] <= BUFFER;
+        it.pass = self.sim_t - b[2] <= BUFFER;
+        it
     }
 
     /// Which player the human steers: the ball holder, the one the ball is
@@ -766,16 +836,41 @@ impl Match {
             let cur = self.sides[t].control;
             let b = &self.ball;
             let mine = |i: usize| self.players[i].team == t && self.players[i].alive() && self.players[i].hp > 0;
+            let up = |i: usize| {
+                mine(i)
+                    && matches!(
+                        self.players[i].state,
+                        PState::Normal | PState::Throw | PState::Catch | PState::Duck | PState::Dive | PState::WindUp
+                    )
+            };
+            // a new throw at us: hand control to its target right away
+            if b.state == BallState::Flying && b.live && b.team != t && b.shot != Shot::Pass && b.id != self.sides[t].seen_ball {
+                self.sides[t].seen_ball = b.id;
+                let tg = b.target;
+                if mine(tg) && tg != cur {
+                    if self.players[cur].state == PState::Catch {
+                        self.players[cur].state = PState::Normal;
+                        self.players[cur].catch_cd = 0;
+                    }
+                    self.sides[t].control = tg;
+                    self.sides[t].run_dir = 0;
+                    continue;
+                }
+            }
+            let b = &self.ball;
             let cand = match b.state {
                 BallState::Held(h) if self.players[h].team == t => Some(h),
                 BallState::Flying if mine(b.target) => Some(b.target),
                 _ => {
-                    let best = (t * TEAM_SIZE..(t + 1) * TEAM_SIZE).filter(|&i| mine(i)).min_by(|&a, &c| {
+                    // never hand control to someone lying on the floor
+                    let any_up = (t * TEAM_SIZE..(t + 1) * TEAM_SIZE).any(up);
+                    let ok = |i: usize| if any_up { up(i) } else { mine(i) };
+                    let best = (t * TEAM_SIZE..(t + 1) * TEAM_SIZE).filter(|&i| ok(i)).min_by(|&a, &c| {
                         let d = |i: usize| (self.players[i].x - b.x).hypot(self.players[i].y - b.y);
                         d(a).partial_cmp(&d(c)).unwrap()
                     });
                     match best {
-                        Some(i) if mine(cur) => {
+                        Some(i) if ok(cur) => {
                             let d = |i: usize| (self.players[i].x - b.x).hypot(self.players[i].y - b.y);
                             if d(i) + 8.0 < d(cur) {
                                 Some(i)
@@ -827,10 +922,12 @@ impl Match {
         // 0. The coach's wrench is coming at me: get out of the way.
         if let Some(w) = &self.wrench {
             if w.live && w.target == i && !w.judged {
-                if me.y < 14.0 || (me.y < DEPTH - 14.0 && (i + self.frame as usize / 90) % 2 == 0) {
-                    it.my = 1.0;
-                } else {
-                    it.my = -1.0;
+                // duck under it at the last moment, or sidestep along the court
+                let near = (w.x - me.x).hypot(w.y - me.y) < 22.0;
+                if near && me.state == PState::Normal && me.catch_cd == 0 && (i + self.frame as usize / 60) % 3 != 0 {
+                    it.pass = true;
+                } else if !near {
+                    it.mx = if me.x > (lo + hi) / 2.0 { -1.0 } else { 1.0 };
                 }
                 return (it, ai);
             }
@@ -853,8 +950,17 @@ impl Match {
                     let catch_p = if mate_of_human {
                         0.0
                     } else {
-                        (0.18 + 0.4 * skill + (td.catch - 3) as f32 * 0.08) * shot_mod
+                        (0.12 + 0.4 * skill + (td.catch - 3) as f32 * 0.11) * shot_mod
                     };
+                    // catch timing is human-like: noisy, and late on fast balls
+                    let win = catch_window(td.catch) as f32;
+                    let lead = if b.shot == Shot::Super { win * 0.3 } else { win * 0.5 };
+                    let late = match b.shot {
+                        Shot::Super => 3.0,
+                        Shot::Dash => 2.0,
+                        _ => 0.0,
+                    };
+                    ai.catch_at = lead + rng.range(-1.0, 1.0) * (1.0 - skill) * 6.0 - late;
                     let r = rng.f();
                     ai.choice = if rng.f() < 0.1 + (1.0 - skill) * 0.3 {
                         0
@@ -867,13 +973,18 @@ impl Match {
                     } else {
                         3
                     };
+                    // a low ball can't be ducked: jump it instead
+                    let g = ball_gravity(b.shot);
+                    let tt = t.max(0.0);
+                    let z_at = b.z + b.vz * tt - 0.5 * g * tt * tt;
+                    if ai.choice == 4 && z_at < 10.0 {
+                        ai.choice = 2;
+                    }
                 }
                 if ai.since >= ai.react {
                     match ai.choice {
                         1 => {
-                            let win = catch_window(td.catch) as f32;
-                            let lead = if b.shot == Shot::Super { win * 0.3 } else { win * 0.5 };
-                            if t <= lead && me.state == PState::Normal {
+                            if t <= ai.catch_at && me.state == PState::Normal {
                                 it.throw = true;
                             }
                         }
@@ -939,7 +1050,7 @@ impl Match {
                         2 => {
                             if me.z <= 0.0 && me.vz == 0.0 && ai.hold < ai.delay + 3 {
                                 it.jump = true;
-                            } else if me.z > 0.0 && me.vz.abs() < 0.9 {
+                            } else if me.z > 0.0 && me.vz.abs() < 0.4 {
                                 it.throw = true;
                             } else if me.z <= 0.0 && ai.hold > ai.delay + 8 {
                                 it.throw = true;
@@ -993,11 +1104,18 @@ impl Match {
         let mut rng = self.rng;
         let r = rng.f();
         let mates = (team * TEAM_SIZE..(team + 1) * TEAM_SIZE).filter(|&j| j != i && self.players[j].hp > 0).count();
-        let plan = if r < 0.1 + 0.3 * skill {
+        // easy CPUs never throw supers, so the first match teaches the basics
+        let sup = if skill < 0.4 { 0.0 } else { 0.04 + 0.16 * skill };
+        // against good catchers, throw harder
+        let opp = 1 - team;
+        let habit = (opp * TEAM_SIZE..(opp + 1) * TEAM_SIZE).map(|j| self.players[j].catch_habit).fold(0.0, f32::max);
+        let adapt = (habit * 0.06).min(0.25) * skill;
+        let sup = if skill < 0.4 { 0.0 } else { sup + adapt };
+        let plan = if r < sup {
             2
-        } else if r < 0.32 + 0.35 * skill {
+        } else if r < sup + 0.22 + 0.3 * skill + adapt {
             1
-        } else if allow_pass && mates > 0 && r < 0.4 + 0.35 * skill {
+        } else if allow_pass && mates > 0 && r < sup + 0.3 + 0.3 * skill {
             3
         } else {
             0
@@ -1011,11 +1129,15 @@ impl Match {
         self.rng = rng;
     }
 
-    fn apply(&mut self, i: usize, it: Intent) {
+    /// Returns which buttons were used: 1 throw, 2 jump, 4 pass.
+    fn apply(&mut self, i: usize, it: Intent) -> u8 {
         let team = self.players[i].team;
+        let mut used = 0u8;
+        let incoming =
+            self.ball.state == BallState::Flying && self.ball.live && self.ball.team != team && self.ball.shot != Shot::Pass;
         let td = self.tdef(team);
-        let walk = 1.1 + (td.speed - 3) as f32 * 0.12;
-        let run = 2.1 + (td.speed - 3) as f32 * 0.2;
+        let walk = 1.1 + (td.speed - 3) as f32 * 0.07;
+        let run = 2.1 + (td.speed - 3) as f32 * 0.14;
         let win = catch_window(td.catch);
         let holding = self.ball.state == BallState::Held(i);
         let dir = toward(team);
@@ -1038,6 +1160,11 @@ impl Match {
         if p.flash > 0 {
             p.flash -= 1;
         }
+        if p.recoil > 0 {
+            p.recoil -= 1;
+        }
+        p.duck_habit *= 0.9995;
+        p.catch_habit *= 0.9995;
         let ground = p.z <= 0.0;
         match p.state {
             PState::Normal => {
@@ -1058,20 +1185,28 @@ impl Match {
                         p.vz = 1.8;
                         p.face = p.vx.signum();
                         dove = true;
+                        used |= 2;
                     } else if it.jump {
                         p.vz = JUMP_V;
+                        p.run_jump = was_running;
                         jumped = true;
+                        used |= 2;
                     }
                 }
                 if p.state == PState::Dive {
                     // committed to the dive this frame
                 } else
-                if it.throw {
+                if it.throw && holding && p.recoil > 0 {
+                    // still reeling from catching a hard one
+                } else if it.throw && (holding || incoming) {
                     if holding {
+                        used |= 1;
+                        // a super needs the very top of the jump (a bit easier off a run)
+                        let apex = p.vz.abs() < 0.45 || (p.run_jump && p.vz.abs() < 0.9);
                         p.shot = if p.fired_up {
                             p.fired_up = false;
                             Shot::Super
-                        } else if !ground && p.vz.abs() < 1.2 {
+                        } else if !ground && apex {
                             Shot::Super
                         } else if p.run_t >= 6 {
                             Shot::Dash
@@ -1084,18 +1219,24 @@ impl Match {
                             p.vz = 0.0;
                         }
                     } else if ground && p.catch_cd == 0 {
+                        used |= 1;
                         p.state = PState::Catch;
                         p.t = 0;
                         p.vx = 0.0;
                         p.vy = 0.0;
+                        p.face = dir;
                     }
                 } else if it.pass && holding {
+                    used |= 4;
                     want_pass = true;
                 } else if it.pass && ground && p.catch_cd == 0 {
+                    used |= 4;
+                    p.duck_habit += 1.0;
                     p.state = PState::Duck;
                     p.t = 0;
                     p.vx = 0.0;
                     p.vy = 0.0;
+                    p.face = dir;
                 }
                 if p.state == PState::Normal {
                     let away = p.vx * dir < -0.1;
@@ -1134,7 +1275,12 @@ impl Match {
                 }
             }
             PState::Hit => {
-                if ground && p.t > 3 {
+                if ground && p.t > 3 && p.stagger {
+                    p.stagger = false;
+                    p.state = PState::Normal;
+                    p.t = 0;
+                    p.vx = 0.0;
+                } else if ground && p.t > 3 {
                     p.state = PState::Down;
                     p.t = 0;
                     p.vx *= 0.3;
@@ -1242,6 +1388,7 @@ impl Match {
         if want_pass {
             self.pass(i);
         }
+        used
     }
 
     fn choose_target(&self, i: usize, aim: f32, human: bool, rng: &mut Rng) -> Option<usize> {
@@ -1283,7 +1430,6 @@ impl Match {
         let human = matches!(self.sides[team].ctrl, Ctrl::Human(_)) && self.sides[team].control == i;
         let mut rng = self.rng;
         let target = self.choose_target(i, self.players[i].aim, human, &mut rng);
-        self.rng = rng;
         let shot = self.players[i].shot;
         let power = self.tdef(team).power;
         let p = &self.players[i];
@@ -1291,15 +1437,32 @@ impl Match {
         let (tx, ty, tz) = match target {
             Some(t) => {
                 let q = &self.players[t];
-                (q.x, q.y, if matches!(q.state, PState::Duck | PState::Dive) { 5.0 } else { CHEST })
+                let low = matches!(q.state, PState::Duck | PState::Dive);
+                (q.x, q.y, if low { 5.0 } else { CHEST })
             }
             None => (hx + p.face * 60.0, hy, CHEST),
         };
+        let skill = self.sides[team].skill;
+        let habit = target.map(|t| self.players[t].duck_habit).unwrap_or(0.0);
+        let low_p = (skill * (0.2 + 0.12 * habit)).min(0.75);
+        let (vary, low_ball) = (rng.range(0.88, 1.12), !human && shot != Shot::Super && rng.f() < low_p);
+        let tz = if low_ball { 5.0 } else { tz };
+        self.rng = rng;
         let speed = match shot {
             Shot::Normal => 3.4,
             Shot::Dash => 4.6,
             _ => 5.6,
-        } + (power - 3) as f32 * 0.3;
+        } + (power - 3) as f32 * 0.4;
+        let speed = speed * vary;
+        // the CPU leads a moving target
+        let ty = match target {
+            Some(t) if !human => {
+                let q = &self.players[t];
+                let tt = (tx - hx).hypot(ty - hy) / speed;
+                (ty + q.vy * tt * skill).clamp(0.0, DEPTH)
+            }
+            _ => ty,
+        };
         let (dx, dy) = (tx - hx, ty - hy);
         let d = dx.hypot(dy).max(1.0);
         let g = ball_gravity(shot);
@@ -1521,17 +1684,22 @@ impl Match {
         }
         for j in 0..self.players.len() {
             let p = &self.players[j];
-            if p.team == b.team || matches!(p.state, PState::Out | PState::Down | PState::Hit) || p.invuln > 0 {
+            if p.team == b.team || matches!(p.state, PState::Out | PState::Down | PState::Hit) {
                 continue;
             }
             if (b.x - p.x).abs() < 7.0 && (b.y - p.y).abs() < 6.5 && b.z > p.z - 2.0 && b.z < p.z + hit_top(p.state) {
-                let mut win = catch_window(self.tdef(p.team).catch);
-                if b.shot == Shot::Super {
-                    win /= 2;
-                }
+                let base = catch_window(self.tdef(p.team).catch);
+                let win = match b.shot {
+                    Shot::Super => base * 4 / 10,
+                    Shot::Dash => base * 7 / 10,
+                    _ => base,
+                };
                 let facing = p.face * b.vx < 0.0;
                 if p.state == PState::Catch && facing && p.t <= win {
                     self.catch(j);
+                } else if p.invuln > 0 {
+                    // just got up: the ball passes through
+                    continue;
                 } else {
                     self.hit(j);
                 }
@@ -1556,10 +1724,50 @@ impl Match {
         }
     }
 
+    /// Hold the ball too long and the referee gives it to the other side.
+    fn shot_clock(&mut self) {
+        let Some(h) = self.holder() else {
+            self.hold_t = 0;
+            return;
+        };
+        if h != self.hold_by {
+            self.hold_by = h;
+            self.hold_t = 0;
+        }
+        self.hold_t += 1;
+        if self.hold_t == 180 {
+            self.sfx.push(Sfx::Blip);
+        }
+        if self.hold_t >= 300 {
+            let opp = 1 - self.players[h].team;
+            let (x, y, z) = (self.players[h].x, self.players[h].y, self.players[h].z);
+            let j = (opp * TEAM_SIZE..(opp + 1) * TEAM_SIZE)
+                .filter(|&j| self.players[j].state == PState::Normal && self.players[j].hp > 0)
+                .min_by(|&a, &b| {
+                    let d = |j: usize| (self.players[j].x - MID).abs();
+                    d(a).partial_cmp(&d(b)).unwrap()
+                });
+            self.sfx.push(Sfx::Whistle);
+            self.popup(x, y, z + 34.0, "TOO SLOW!", rgb(248, 72, 72));
+            match j {
+                Some(j) => {
+                    self.ball.state = BallState::Held(j);
+                    self.plan_throw(j, true);
+                }
+                None => {
+                    // nobody to take it: drop it on the other side of the line
+                    self.ball.state = BallState::Loose;
+                    self.ball.x = MID + toward(opp) * 20.0;
+                    self.ball.vz = 1.0;
+                }
+            }
+            self.hold_t = 0;
+        }
+    }
+
     fn behind(&self, t: usize) -> bool {
         let hp = |team: usize| self.players.iter().filter(|p| p.team == team).map(|p| p.hp.max(0)).sum::<i32>();
-        let o = 1 - t;
-        hp(t) + 2 < hp(o) || self.sides[t].wins < self.sides[o].wins
+        hp(t) + 3 <= hp(1 - t)
     }
 
     /// When a human's crew falls behind, their coach throws a wrench at them.
@@ -1572,7 +1780,10 @@ impl Match {
             let behind = self.behind(t);
             let target = self.sides[t].control;
             let ball_incoming = self.ball.state == BallState::Flying && self.ball.live && self.ball.team != t;
-            let ready = self.players[target].state == PState::Normal && !self.players[target].fired_up;
+            let ready = self.players[target].state == PState::Normal
+                && !self.players[target].fired_up
+                && self.holder() != Some(target)
+                && self.coaches[t].count < 2;
             let c = &mut self.coaches[t];
             if c.cooldown > 0 {
                 c.cooldown -= 1;
@@ -1588,7 +1799,8 @@ impl Match {
                 }
             } else if self.wrench.is_none() && c.cooldown == 0 && behind && ready && !ball_incoming {
                 c.warn = 45;
-                c.cooldown = 780 + self.rng.int(300);
+                c.count += 1;
+                c.cooldown = 1500 + self.rng.int(600);
                 self.quote = 170;
                 self.quote_team = t;
                 let (cx, cy) = coach_pos(t);
@@ -1618,6 +1830,8 @@ impl Match {
             live: true,
             judged: false,
             t: 0,
+            tx: q.x,
+            ty: q.y,
         });
         self.sfx.push(Sfx::Throw);
     }
@@ -1635,7 +1849,8 @@ impl Match {
         if w.live {
             let hit = (0..self.players.len()).find(|&j| {
                 let p = &self.players[j];
-                p.team == w.team
+                j == w.target
+                    && self.holder() != Some(j)
                     && !matches!(p.state, PState::Out | PState::Down | PState::Hit)
                     && p.invuln == 0
                     && (w.x - p.x).abs() < 7.0
@@ -1649,9 +1864,10 @@ impl Match {
                 let p = &mut self.players[j];
                 p.state = PState::Hit;
                 p.t = 0;
-                p.vx = push * 1.2;
-                p.vz = 2.2;
+                p.vx = push * 1.0;
+                p.vz = 1.6;
                 p.flash = 6;
+                p.stagger = true;
                 let (x, y, z) = (p.x, p.y, p.z);
                 w.live = false;
                 w.vx *= -0.3;
@@ -1701,7 +1917,15 @@ impl Match {
         let p = &mut self.players[j];
         p.state = PState::Normal;
         p.t = 0;
-        p.vx = -p.face * if shot == Shot::Super { 3.0 } else { 1.2 };
+        // hard shots knock the catcher back and need a moment to recover
+        let (push, recoil) = match shot {
+            Shot::Super => (3.5, 10),
+            Shot::Dash => (2.0, 10),
+            _ => (1.2, 0),
+        };
+        p.vx = -p.face * push;
+        p.recoil = recoil;
+        p.catch_habit += 1.0;
         let (x, y, z) = (p.x, p.y, p.z);
         self.sfx.push(Sfx::Catch);
         self.popup(x, y, z + 32.0, "CATCH!", rgb(120, 248, 120));
@@ -1714,6 +1938,7 @@ impl Match {
 
     fn hit(&mut self, j: usize) {
         self.ball_contact = (self.ball.x, self.ball.y, self.ball.z);
+        let power = self.tdef(self.ball.team).power;
         let shot = self.ball.shot;
         let big = shot == Shot::Super;
         let dmg = if big { 2 } else { 1 };
@@ -1725,7 +1950,7 @@ impl Match {
         p.hp -= dmg;
         p.state = PState::Hit;
         p.t = 0;
-        p.vx = push * if big { 2.6 } else { 1.4 };
+        p.vx = push * if big { 2.6 } else { 1.4 } * (1.0 + (power - 3) as f32 * 0.15);
         p.vy = 0.0;
         p.vz = if big { 3.8 } else { 2.4 };
         p.face = -push;
@@ -1785,12 +2010,22 @@ impl Match {
         } else if out[1] {
             Some(0)
         } else if self.time <= 0 {
-            self.stats.timeouts += 1;
-            match hp[0].cmp(&hp[1]) {
+            // tie-break: players standing, then hearts, then sudden death once
+            let standing = |t: usize| self.players.iter().filter(|p| p.team == t && p.hp > 0).count();
+            let w = match standing(0).cmp(&standing(1)).then(hp[0].cmp(&hp[1])) {
                 std::cmp::Ordering::Greater => Some(0),
                 std::cmp::Ordering::Less => Some(1),
                 std::cmp::Ordering::Equal => None,
+            };
+            if w.is_none() && !self.sudden {
+                self.sudden = true;
+                self.time = 15 * 60;
+                self.banner("SUDDEN DEATH!", 60, rgb(248, 72, 72));
+                self.sfx.push(Sfx::Whistle);
+                return;
             }
+            self.stats.timeouts += 1;
+            w
         } else {
             return;
         };

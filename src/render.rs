@@ -201,6 +201,13 @@ pub fn draw_match(f: &mut Frame, m: &Match, sc: &Scenery, bank: &SpriteBank, t: 
     if let Some(w) = &m.wrench {
         let (sx, sy) = proj(w.x, w.y, 0.0);
         f.shade_ellipse(sx, sy, 3, 1, 5, 8);
+        if w.live && (t / 4) % 2 == 0 {
+            // warning marker where it is aimed
+            let (mx, my) = proj(w.tx, w.ty, 0.0);
+            let c = rgb(248, 72, 72);
+            f.line(mx - 4, my - 2, mx + 4, my + 2, c);
+            f.line(mx - 4, my + 2, mx + 4, my - 2, c);
+        }
         items.push((w.y + 0.2, Item::Wrench));
     }
     items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -381,9 +388,7 @@ fn dust_color(c: crate::teams::Court) -> u32 {
 
 fn draw_player(f: &mut Frame, m: &Match, bank: &SpriteBank, i: usize, t: u32) {
     let p = &m.players[i];
-    if p.invuln > 0 && (p.invuln / 3) % 2 == 0 {
-        return;
-    }
+
     let team = m.sides[p.team].team;
     let def = &crate::teams::TEAMS[team].players[p.slot];
     let pose = pose_for(m, i);
@@ -391,7 +396,8 @@ fn draw_player(f: &mut Frame, m: &Match, bank: &SpriteBank, i: usize, t: u32) {
     let (sx, sy) = proj(p.x, p.y, p.z);
     let flip = p.face < 0.0;
     let base = palette(team, p.slot);
-    let pal = if p.flash > 4 { flash_palette(&base) } else { base };
+    let blink = p.invuln > 0 && (p.invuln / 3) % 2 == 0;
+    let pal = if p.flash > 4 || blink { flash_palette(&base) } else { base };
     if p.fired_up {
         for k in 0..6u32 {
             let ph = (t + k * 7) % 24;
@@ -407,7 +413,9 @@ fn draw_player(f: &mut Frame, m: &Match, bank: &SpriteBank, i: usize, t: u32) {
     if m.holder() == Some(i) {
         let (hx, hy) = sprites::hand(pose);
         let (bx, by) = canvas_to_screen(hx, hy, sx, sy, flip);
-        draw_ball(f, bx + if flip { -1 } else { 1 }, by - 1, m.ball.spin, None);
+        // shot clock: the ball blinks hot when you hold it too long
+        let hot = (m.hold_t > 180 && (t / 4) % 2 == 0).then_some(t);
+        draw_ball(f, bx + if flip { -1 } else { 1 }, by - 1, m.ball.spin, hot);
     }
     if p.state == PState::Down && p.hp > 0 {
         // dizzy stars

@@ -21,6 +21,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("--shots") => dodgeball::headless::shots(args.get(2).map(String::as_str).unwrap_or("shots")),
+        Some("--probe") => dodgeball::headless::probe(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(4)),
         Some("--sim") => dodgeball::headless::sim(args.get(2).and_then(|s| s.parse().ok()).unwrap_or(100)),
         _ => macroquad::Window::from_config(conf(), run()),
     }
@@ -34,9 +35,10 @@ fn pads() -> [Pad; 2] {
             down: k(KeyCode::Down),
             left: k(KeyCode::Left),
             right: k(KeyCode::Right),
-            a: k(KeyCode::Z),
-            b: k(KeyCode::X),
-            c: k(KeyCode::C),
+            // , . / work too, so in 2P the two left hands don't collide
+            a: k(KeyCode::Z) || k(KeyCode::Comma),
+            b: k(KeyCode::X) || k(KeyCode::Period),
+            c: k(KeyCode::C) || k(KeyCode::Slash),
             start: k(KeyCode::Enter),
         },
         Pad {

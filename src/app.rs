@@ -28,7 +28,7 @@ pub enum Scene {
     Champion,
 }
 
-const CPU_SKILL: [f32; 3] = [0.35, 0.6, 0.85];
+pub const CPU_SKILL: [f32; 3] = [0.35, 0.75, 0.92];
 
 pub struct App {
     pub scene: Scene,
@@ -132,7 +132,8 @@ impl App {
 
     fn start_stage(&mut self) {
         let opp = self.ladder[self.stage];
-        let mate = 0.5;
+        // your CPU teammates dodge as well as the crew you face (at least 0.55)
+        let mate = CPU_SKILL[self.stage].max(0.55);
         self.start_match([self.cursor[0], opp], [Ctrl::Human(0), Ctrl::Cpu], [mate, CPU_SKILL[self.stage]], TEAMS[opp].court);
     }
 
@@ -486,7 +487,12 @@ impl App {
                 }
             }
         }
-        f.text_center(128, 214, "ARROWS: PICK   Z: OK   X: BACK", rgb(200, 200, 232), OUTLINE, false);
+        if self.mode == Mode::Two {
+            f.text_center(128, 208, "1P: ARROWS + , . /  (OR Z X C)", rgb(248, 232, 64), OUTLINE, false);
+            f.text_center(128, 216, "2P: W A S D + F G H", rgb(96, 224, 248), OUTLINE, false);
+        } else {
+            f.text_center(128, 214, "ARROWS: PICK   Z: OK   X: BACK", rgb(200, 200, 232), OUTLINE, false);
+        }
     }
 
     fn draw_versus(&self, f: &mut Frame, t: u32) {

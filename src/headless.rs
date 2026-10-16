@@ -315,3 +315,254 @@ pub fn sim(n: usize) {
     }
     println!("higher skill (gap > 0.2) won {}/{}", better_skill_won, skill_games);
 }
+
+// ------------------------------------------------------------------ probe
+// Scripted "human" on side 0 against the CPU ladder, to find exploits and
+// check the difficulty curve. Based on the gameplay review's probe.
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Def {
+    Stand,
+    Wiggle,
+    /// press catch exactly this many frames before contact
+    Catch(i32),
+    Duck,
+    /// a decent human: moves, tries to catch half the balls with +-3 frames of noise
+    Decent,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Off {
+    Normal,
+    /// frame-perfect super every time
+    Super,
+    Stall,
+    /// supers about 40% of the time, with +-2 frames of timing noise
+    Decent,
+}
+
+struct Bot {
+    def: Def,
+    off: Off,
+    prev: Pad,
+    t: u64,
+    rng: Rng,
+    seen_ball: u32,
+    catch_at: Option<f32>,
+    holder_seen: Option<usize>,
+    try_super: bool,
+    jump_at: Option<u64>,
+    throw_at: Option<u64>,
+}
+
+impl Bot {
+    fn new(def: Def, off: Off, seed: u64) -> Self {
+        Bot { def, off, prev: Pad::default(), t: 0, rng: Rng(seed | 1), seen_ball: 0, catch_at: None, holder_seen: None, try_super: false, jump_at: None, throw_at: None }
+    }
+
+    fn pad(&mut self, m: &Match) -> Pad {
+        self.t += 1;
+        let me = m.sides[0].control;
+        let p = &m.players[me];
+        let b = &m.ball;
+        let mut pad = Pad::default();
+        let hp = |t: usize| m.players.iter().filter(|q| q.team == t).map(|q| q.hp.max(0)).sum::<i32>();
+        let wiggle = |pad: &mut Pad, t: u64| {
+            if (t / 30) % 2 == 0 { pad.up = true } else { pad.down = true }
+            if p.y < 4.0 { pad.up = false; pad.down = true }
+            if p.y > DEPTH - 4.0 { pad.down = false; pad.up = true }
+        };
+        let tap = |now: bool, prev: bool| now && !prev;
+        match b.state {
+            BallState::Held(h) if h == me => {
+                if self.holder_seen != Some(h) {
+                    self.holder_seen = Some(h);
+                    self.try_super = match self.off {
+                        Off::Super => true,
+                        Off::Decent => self.rng.f() < 0.4,
+                        _ => false,
+                    };
+                    self.jump_at = None;
+                    self.throw_at = None;
+                }
+                let stall = self.off == Off::Stall && hp(0) > hp(1);
+                if stall {
+                    pad.left = p.x > 20.0;
+                    wiggle(&mut pad, self.t);
+                } else if p.x < 96.0 && p.z <= 0.0 && self.jump_at.is_none() {
+                    pad.right = true;
+                } else if self.try_super {
+                    if self.jump_at.is_none() && p.z <= 0.0 && p.state == PState::Normal {
+                        self.jump_at = Some(self.t);
+                        let noise = if self.off == Off::Decent { self.rng.int(5) as u64 } else { 2 };
+                        // apex is about 16 frames after take-off
+                        self.throw_at = Some(self.t + 14 + noise);
+                        pad.b = true;
+                    } else if Some(self.t) == self.throw_at {
+                        pad.a = true;
+                    } else if self.throw_at.map(|ta| self.t > ta + 30).unwrap_or(false) {
+                        pad.a = tap(true, self.prev.a);
+                    }
+                } else {
+                    pad.a = tap(true, self.prev.a);
+                }
+            }
+            BallState::Flying if b.live && b.team == 1 => {
+                if b.id != self.seen_ball {
+                    self.seen_ball = b.id;
+                    self.catch_at = match self.def {
+                        Def::Catch(n) => Some(n as f32),
+                        Def::Decent if self.rng.f() < 0.5 => Some(4.0 + self.rng.range(-3.0, 3.0)),
+                        _ => None,
+                    };
+                }
+                let t = if b.vx.abs() > 0.1 { ((p.x - b.x).abs() - 7.0) / b.vx.abs() } else { 99.0 };
+                match self.def {
+                    Def::Stand => {}
+                    Def::Wiggle => wiggle(&mut pad, self.t),
+                    Def::Catch(_) | Def::Decent => {
+                        if let Some(at) = self.catch_at {
+                            if b.target == me && t <= at && t > at - 1.0 {
+                                pad.a = true;
+                            }
+                        } else {
+                            wiggle(&mut pad, self.t);
+                        }
+                    }
+                    Def::Duck => {
+                        if b.target == me && t <= 6.0 && p.state == PState::Normal {
+                            pad.c = tap(true, self.prev.c);
+                        }
+                    }
+                }
+            }
+            BallState::Loose => {
+                if b.x < MID + 5.0 {
+                    if b.x > p.x + 2.0 { pad.right = true }
+                    if b.x < p.x - 2.0 { pad.left = true }
+                    if b.y > p.y + 2.0 { pad.down = true }
+                    if b.y < p.y - 2.0 { pad.up = true }
+                }
+            }
+            _ => {
+                if matches!(self.def, Def::Wiggle | Def::Decent) {
+                    wiggle(&mut pad, self.t);
+                }
+                if p.x > 60.0 { pad.left = true }
+            }
+        }
+        if let Some(w) = &m.wrench {
+            if w.live && w.target == me && self.def != Def::Stand {
+                pad.up = false;
+                pad.down = false;
+                if p.x > 40.0 { pad.left = true; pad.right = false } else { pad.right = true; pad.left = false }
+            }
+        }
+        self.prev = pad;
+        pad
+    }
+}
+
+#[derive(Default)]
+struct Res {
+    wins: u32,
+    n: u32,
+    rounds: u32,
+    timeouts: u32,
+    hits_taken: u32,
+    dead: u64,
+    catches: u32,
+    cpu_throws: u32,
+    wrenches: u32,
+}
+
+fn probe_play(def: Def, off: Off, skill: f32, my: usize, opp: usize, seeds: u32, r: &mut Res) {
+    for s in 0..seeds {
+        let seed = s as u64 * 7 + 3 + my as u64 * 101 + opp as u64 * 13;
+        let mut m = Match::new([my, opp], [Ctrl::Human(0), Ctrl::Cpu], [skill.max(0.55), skill], TEAMS[opp].court, seed);
+        let mut bot = Bot::new(def, off, seed);
+        let mut f = 0;
+        let mut prev_hp = [0i32; 6];
+        let mut prev_state = BallState::Loose;
+        let mut had_wrench = false;
+        while !m.finished() && f < 60 * 60 * 15 {
+            let pad = bot.pad(&m);
+            for (k, p) in m.players.iter().enumerate() {
+                prev_hp[k] = p.hp;
+            }
+            let prev_team = m.ball.team;
+            m.update(&[pad, Pad::default()]);
+            m.sfx.clear();
+            f += 1;
+            if m.phase == Phase::Play {
+                let p = &m.players[m.sides[0].control];
+                if matches!(p.state, PState::Hit | PState::Down) && m.ball.state == BallState::Loose && m.ball.x < MID {
+                    r.dead += 1;
+                }
+            }
+            for (k, p) in m.players.iter().enumerate().take(3) {
+                if p.hp < prev_hp[k] {
+                    r.hits_taken += 1;
+                }
+            }
+            let hw = m.wrench.as_ref().map(|w| w.live).unwrap_or(false);
+            if hw && !had_wrench {
+                r.wrenches += 1;
+            }
+            had_wrench = hw;
+            if prev_state == BallState::Flying && prev_team == 1 {
+                if let BallState::Held(h) = m.ball.state {
+                    if h < 3 {
+                        r.catches += 1;
+                    }
+                }
+            }
+            if m.ball.state == BallState::Flying && prev_state != BallState::Flying && m.ball.team == 1 && m.ball.shot != Shot::Pass {
+                r.cpu_throws += 1;
+            }
+            prev_state = m.ball.state;
+        }
+        r.n += 1;
+        r.rounds += m.stats.rounds;
+        r.timeouts += m.stats.timeouts;
+        if m.winner == Some(0) {
+            r.wins += 1;
+        }
+    }
+}
+
+pub fn probe(per: u32) {
+    println!("{:<18} {:>5} {:>5} {:>6} {:>8} {:>13} {:>9} {:>8}", "bot", "cpu", "win%", "tout%", "taken/rd", "caught/throws", "dead s/rd", "wrench/rd");
+    let rows = [
+        (Def::Stand, Off::Normal),
+        (Def::Wiggle, Off::Normal),
+        (Def::Wiggle, Off::Super),
+        (Def::Duck, Off::Super),
+        (Def::Catch(4), Off::Super),
+        (Def::Wiggle, Off::Stall),
+        (Def::Decent, Off::Decent),
+    ];
+    for &(def, off) in &rows {
+        for &skill in &crate::app::CPU_SKILL {
+            let mut r = Res::default();
+            for my in 0..4 {
+                for k in 1..4 {
+                    probe_play(def, off, skill, my, (my + k) % 4, per, &mut r);
+                }
+            }
+            let rd = r.rounds.max(1) as f32;
+            println!(
+                "{:<18} {:>5.2} {:>5.0} {:>6.0} {:>8.1} {:>6}/{:<6} {:>9.1} {:>8.2}",
+                format!("{:?}/{:?}", def, off),
+                skill,
+                100.0 * r.wins as f32 / r.n as f32,
+                100.0 * r.timeouts as f32 / rd,
+                r.hits_taken as f32 / rd,
+                r.catches,
+                r.cpu_throws,
+                r.dead as f32 / 60.0 / rd,
+                r.wrenches as f32 / rd
+            );
+        }
+    }
+}

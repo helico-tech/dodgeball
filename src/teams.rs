@@ -81,9 +81,9 @@ pub const TEAMS: [TeamDef; 4] = [
         shirt: (rgb(48, 192, 72), rgb(24, 120, 48)),
         pants: (rgb(64, 64, 88), rgb(32, 32, 48)),
         acc: (rgb(248, 232, 40), rgb(184, 152, 16)),
-        power: 5,
+        power: 4,
         speed: 2,
-        catch: 2,
+        catch: 3,
         court: Court::Boardwalk,
         players: [
             PlayerDef { name: "SNAKE", style: 2, skin: SKIN_TAN, hair: BLACK, cap: Some(CAP_BLACK) },
@@ -113,9 +113,9 @@ pub const TEAMS: [TeamDef; 4] = [
         shirt: (rgb(152, 80, 224), rgb(96, 48, 160)),
         pants: (rgb(248, 136, 32), rgb(192, 88, 16)),
         acc: (rgb(128, 248, 64), rgb(64, 168, 32)),
-        power: 2,
+        power: 3,
         speed: 2,
-        catch: 5,
+        catch: 4,
         court: Court::Skatepark,
         players: [
             PlayerDef { name: "OLLIE", style: 4, skin: SKIN_TAN, hair: LIME, cap: None },
