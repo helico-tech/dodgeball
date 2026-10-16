@@ -7,7 +7,10 @@ or 2P versus. All art and sound are generated in code.
 ## Build and run
 - `cargo run --release` — play (window, keyboard, sound).
 - `cargo test` — smoke tests (matches finish, all screens render).
-- `cargo run -- --sim 200` — CPU-vs-CPU balance stats.
+- `cargo run --release -- --sim 1000` — CPU-vs-CPU balance stats.
+- `cargo run --release -- --probe 6` — scripted "human" bots against the
+  1P ladder: finds exploits (super spam, perfect catches, stalling) and
+  checks the difficulty curve.
 - `cargo run -- --shots <dir>` — scripted PNG screenshots (3x) of every
   screen, key moments and a sprite sheet. Use this to review visuals.
 

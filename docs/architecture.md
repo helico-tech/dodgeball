@@ -18,7 +18,15 @@ that owns the window, keyboard and speakers through macroquad.
 - `render` — draws a `Match` (depth-sorted sprites, shadows, effects, HUD).
 - `app` — scene flow: title, select, versus, play, continue, champion.
 - `audio` — chiptune synth: sound effects and songs as WAV bytes.
-- `headless` — `--shots` and `--sim` (no window needed).
+- `headless` — `--shots`, `--sim` and `--probe` (no window needed).
+
+## Balance targets
+Tune with `--sim` and `--probe` after any rule change:
+- CPU vs CPU: rounds 45-70 s, time-ups under 12%, supers 10-15% of
+  throws, every crew 47-53% (with 1000 matches).
+- Probe "Decent" bot across the ladder: about 80-100 / 55 / 30% wins.
+- Exploits: super spam under 40% at stage 3, stalling no better than
+  playing.
 
 ## Key rules
 - The game is deterministic given a seed and the pad inputs; nothing in the
