@@ -29,6 +29,9 @@ Get the latest build from the [Releases](../../releases) page.
   open `Dodge or Die.app`. The app is not signed by Apple, so the first
   time right-click it and choose *Open*, or run
   `xattr -dr com.apple.quarantine "Dodge or Die.app"`.
+- **Windows** (x86_64): unzip `dodge-or-die-windows-x86_64.zip` and run
+  `dodgeball.exe`. Windows SmartScreen may warn because the exe is not
+  signed: choose *More info* and then *Run anyway*.
 - **Linux** (x86_64): unpack `dodge-or-die-linux-x86_64.tar.gz` and run
   `./dodgeball`. Needs OpenGL, X11 and ALSA (present on most desktops).
 
@@ -53,6 +56,8 @@ Get the latest build from the [Releases](../../releases) page.
 cargo run --release
 ```
 On Linux you need `libasound2-dev libx11-dev libxi-dev libgl1-mesa-dev`.
+On Windows the release build has no console window, so run the developer
+tools below from a debug build (`cargo run -- --sim 100`) to see output.
 
 Developer tools, no window needed:
 - `cargo run --release -- --shots <dir>` renders screenshots of every screen.

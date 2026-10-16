@@ -12,7 +12,7 @@ jobs:
   linux:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libxi-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
@@ -24,7 +24,7 @@ jobs:
           mkdir -p dist/dodge-or-die
           cp target/release/dodgeball README.md dist/dodge-or-die/
           tar -C dist -czf dodge-or-die-linux-x86_64.tar.gz dodge-or-die
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: dodge-or-die-linux-x86_64.tar.gz
@@ -32,7 +32,7 @@ jobs:
   macos:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -51,16 +51,35 @@ jobs:
           sed "s/__VERSION__/$VERSION/" packaging/Info.plist > "$APP/Contents/Info.plist"
           codesign --force --deep -s - "$APP"
           cd dist && ditto -c -k --keepParent "Dodge or Die.app" ../DodgeOrDie-macos.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: DodgeOrDie-macos.zip
 
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: cargo build --release
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/dodge-or-die | Out-Null
+          Copy-Item target/release/dodgeball.exe, README.md dist/dodge-or-die/
+          Compress-Archive -Path dist/dodge-or-die -DestinationPath dodge-or-die-windows-x86_64.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: dodge-or-die-windows-x86_64.zip
+
   release:
-    needs: [linux, macos]
+    needs: [linux, macos, windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

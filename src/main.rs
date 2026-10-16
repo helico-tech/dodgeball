@@ -1,3 +1,6 @@
+// release builds on Windows open no console window next to the game
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use dodgeball::app::App;
 use dodgeball::audio::{self, Track, ALL_SFX, ALL_TRACKS};
 use dodgeball::game::{Pad, Sfx};
