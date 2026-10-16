@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libx11-dev libxi-dev libgl1-mesa-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: cargo build --release
+      - name: Package
+        run: |
+          mkdir -p dist/dodge-or-die
+          cp target/release/dodgeball README.md dist/dodge-or-die/
+          tar -C dist -czf dodge-or-die-linux-x86_64.tar.gz dodge-or-die
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dodge-or-die-linux-x86_64.tar.gz
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --release
+      - run: cargo build --release --target aarch64-apple-darwin
+      - run: cargo build --release --target x86_64-apple-darwin
+      - name: Package universal app
+        run: |
+          APP="dist/Dodge or Die.app"
+          mkdir -p "$APP/Contents/MacOS"
+          lipo -create -output "$APP/Contents/MacOS/dodgeball" \
+            target/aarch64-apple-darwin/release/dodgeball \
+            target/x86_64-apple-darwin/release/dodgeball
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d '"' -f2)
+          sed "s/__VERSION__/$VERSION/" packaging/Info.plist > "$APP/Contents/Info.plist"
+          codesign --force --deep -s - "$APP"
+          cd dist && ditto -c -k --keepParent "Dodge or Die.app" ../DodgeOrDie-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: DodgeOrDie-macos.zip
+
+  release:
+    needs: [linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            echo "Not a tag: builds are attached to this run as artifacts only."
+            exit 0
+          fi
+          gh release create "$TAG" artifacts/* --repo "$GITHUB_REPOSITORY" \
+            --title "Dodge or Die! $TAG" --generate-notes

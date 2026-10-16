@@ -417,8 +417,23 @@ pub fn text_width(s: &str, bold: bool) -> i32 {
 fn bold_row(row: &str) -> [bool; 7] {
     let b: Vec<bool> = row.bytes().map(|c| c == b'#').collect();
     let mut m = [b[0], b[0], b[1], b[2], b[3], b[4], b[4]];
+    // thicken lone strokes outward (left of centre to the left), so V and Y stay symmetric
+    let src = m;
     for i in 2..=4 {
-        if m[i] && !m[i - 1] && !m[i + 1] && (i + 2 >= 7 || !m[i + 2]) {
+        if !src[i] || src[i - 1] || src[i + 1] {
+            continue;
+        }
+        if i == 2 {
+            if !src[0] {
+                m[1] = true;
+            }
+        } else if i == 3 {
+            // centre stroke: grow both ways so it stays centred
+            if !src[1] && !src[5] {
+                m[2] = true;
+                m[4] = true;
+            }
+        } else if i + 2 >= 7 || !src[i + 2] {
             m[i + 1] = true;
         }
     }
@@ -448,7 +463,7 @@ pub fn glyph(c: char) -> Option<[&'static str; 7]> {
         'S' => [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
         'T' => ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
         'U' => ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
-        'V' => ["#...#", "#...#", "#...#", "#...#", "#...#", ".#.#.", "..#.."],
+        'V' => ["#...#", "#...#", "#...#", ".#.#.", ".#.#.", ".#.#.", "..#.."],
         'W' => ["#...#", "#...#", "#...#", "#.#.#", "#.#.#", "#.#.#", ".#.#."],
         'X' => ["#...#", "#...#", ".#.#.", "..#..", ".#.#.", "#...#", "#...#"],
         'Y' => ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
