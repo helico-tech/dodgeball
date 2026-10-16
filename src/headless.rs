@@ -329,6 +329,8 @@ enum Def {
     Duck,
     /// a decent human: moves, tries to catch half the balls with +-3 frames of noise
     Decent,
+    /// mashes Z while walking onto loose balls (must not cause instant throws)
+    Mash,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -339,6 +341,10 @@ enum Off {
     Stall,
     /// supers about 40% of the time, with +-2 frames of timing noise
     Decent,
+    /// never throws, passes every 250 frames (must not dodge the shot clock)
+    PassStall,
+    /// waits 30 frames after getting the ball, then throws
+    Patient,
 }
 
 struct Bot {
@@ -353,11 +359,12 @@ struct Bot {
     try_super: bool,
     jump_at: Option<u64>,
     throw_at: Option<u64>,
+    got_at: u64,
 }
 
 impl Bot {
     fn new(def: Def, off: Off, seed: u64) -> Self {
-        Bot { def, off, prev: Pad::default(), t: 0, rng: Rng(seed | 1), seen_ball: 0, catch_at: None, holder_seen: None, try_super: false, jump_at: None, throw_at: None }
+        Bot { def, off, prev: Pad::default(), t: 0, rng: Rng(seed | 1), seen_ball: 0, catch_at: None, holder_seen: None, try_super: false, jump_at: None, throw_at: None, got_at: 0 }
     }
 
     fn pad(&mut self, m: &Match) -> Pad {
@@ -373,6 +380,9 @@ impl Bot {
             if p.y > DEPTH - 4.0 { pad.down = false; pad.up = true }
         };
         let tap = |now: bool, prev: bool| now && !prev;
+        if b.state != BallState::Held(me) {
+            self.holder_seen = None;
+        }
         match b.state {
             BallState::Held(h) if h == me => {
                 if self.holder_seen != Some(h) {
@@ -384,9 +394,17 @@ impl Bot {
                     };
                     self.jump_at = None;
                     self.throw_at = None;
+                    self.got_at = self.t;
                 }
                 let stall = self.off == Off::Stall && hp(0) > hp(1);
-                if stall {
+                if self.off == Off::PassStall {
+                    wiggle(&mut pad, self.t);
+                    if (self.t - self.got_at) % 250 == 249 {
+                        pad.c = true;
+                    }
+                } else if self.off == Off::Patient && self.t - self.got_at < 30 {
+                    // hold on a moment
+                } else if stall {
                     pad.left = p.x > 20.0;
                     wiggle(&mut pad, self.t);
                 } else if p.x < 96.0 && p.z <= 0.0 && self.jump_at.is_none() {
@@ -419,7 +437,7 @@ impl Bot {
                 let t = if b.vx.abs() > 0.1 { ((p.x - b.x).abs() - 7.0) / b.vx.abs() } else { 99.0 };
                 match self.def {
                     Def::Stand => {}
-                    Def::Wiggle => wiggle(&mut pad, self.t),
+                    Def::Wiggle | Def::Mash => wiggle(&mut pad, self.t),
                     Def::Catch(_) | Def::Decent => {
                         if let Some(at) = self.catch_at {
                             if b.target == me && t <= at && t > at - 1.0 {
@@ -437,6 +455,9 @@ impl Bot {
                 }
             }
             BallState::Loose => {
+                if self.def == Def::Mash {
+                    pad.a = self.t % 2 == 0;
+                }
                 if b.x < MID + 5.0 {
                     if b.x > p.x + 2.0 { pad.right = true }
                     if b.x < p.x - 2.0 { pad.left = true }
@@ -474,6 +495,8 @@ struct Res {
     catches: u32,
     cpu_throws: u32,
     wrenches: u32,
+    max_poss: u64,
+    insta: u32,
 }
 
 fn probe_play(def: Def, off: Off, skill: f32, my: usize, opp: usize, seeds: u32, r: &mut Res) {
@@ -485,6 +508,8 @@ fn probe_play(def: Def, off: Off, skill: f32, my: usize, opp: usize, seeds: u32,
         let mut prev_hp = [0i32; 6];
         let mut prev_state = BallState::Loose;
         let mut had_wrench = false;
+        let mut poss = 0u64;
+        let mut picked: Option<u64> = None;
         while !m.finished() && f < 60 * 60 * 15 {
             let pad = bot.pad(&m);
             for (k, p) in m.players.iter().enumerate() {
@@ -494,10 +519,28 @@ fn probe_play(def: Def, off: Off, skill: f32, my: usize, opp: usize, seeds: u32,
             m.update(&[pad, Pad::default()]);
             m.sfx.clear();
             f += 1;
-            if m.phase == Phase::Play {
+            if m.phase == Phase::Play && m.hitstop == 0 {
                 let p = &m.players[m.sides[0].control];
                 if matches!(p.state, PState::Hit | PState::Down) && m.ball.state == BallState::Loose && m.ball.x < MID {
                     r.dead += 1;
+                }
+                // possession by side 0: held, passing, or resting on its floor
+                let ours = match m.ball.state {
+                    BallState::Held(h) => h < 3,
+                    BallState::Flying => m.ball.shot == Shot::Pass && m.ball.team == 0,
+                    BallState::Loose => m.ball.x < MID,
+                };
+                poss = if ours { poss + 1 } else { 0 };
+                r.max_poss = r.max_poss.max(poss);
+            }
+            // an instant throw right after picking up the ball
+            if prev_state == BallState::Loose && matches!(m.ball.state, BallState::Held(h) if h < 3) {
+                picked = Some(f);
+            }
+            if let (Some(at), BallState::Held(h)) = (picked, m.ball.state) {
+                if h < 3 && m.players[h].state == PState::WindUp && f - at <= 10 {
+                    r.insta += 1;
+                    picked = None;
                 }
             }
             for (k, p) in m.players.iter().enumerate().take(3) {
@@ -532,7 +575,10 @@ fn probe_play(def: Def, off: Off, skill: f32, my: usize, opp: usize, seeds: u32,
 }
 
 pub fn probe(per: u32) {
-    println!("{:<18} {:>5} {:>5} {:>6} {:>8} {:>13} {:>9} {:>8}", "bot", "cpu", "win%", "tout%", "taken/rd", "caught/throws", "dead s/rd", "wrench/rd");
+    println!(
+        "{:<18} {:>5} {:>5} {:>6} {:>8} {:>13} {:>9} {:>9} {:>7} {:>5}",
+        "bot", "cpu", "win%", "tout%", "taken/rd", "caught/throws", "dead s/rd", "wrench/rd", "poss s", "insta"
+    );
     let rows = [
         (Def::Stand, Off::Normal),
         (Def::Wiggle, Off::Normal),
@@ -540,6 +586,8 @@ pub fn probe(per: u32) {
         (Def::Duck, Off::Super),
         (Def::Catch(4), Off::Super),
         (Def::Wiggle, Off::Stall),
+        (Def::Wiggle, Off::PassStall),
+        (Def::Mash, Off::Patient),
         (Def::Decent, Off::Decent),
     ];
     for &(def, off) in &rows {
@@ -552,7 +600,7 @@ pub fn probe(per: u32) {
             }
             let rd = r.rounds.max(1) as f32;
             println!(
-                "{:<18} {:>5.2} {:>5.0} {:>6.0} {:>8.1} {:>6}/{:<6} {:>9.1} {:>8.2}",
+                "{:<18} {:>5.2} {:>5.0} {:>6.0} {:>8.1} {:>6}/{:<6} {:>9.1} {:>9.2} {:>7.1} {:>5}",
                 format!("{:?}/{:?}", def, off),
                 skill,
                 100.0 * r.wins as f32 / r.n as f32,
@@ -561,7 +609,9 @@ pub fn probe(per: u32) {
                 r.catches,
                 r.cpu_throws,
                 r.dead as f32 / 60.0 / rd,
-                r.wrenches as f32 / rd
+                r.wrenches as f32 / rd,
+                r.max_poss as f32 / 60.0,
+                r.insta
             );
         }
     }

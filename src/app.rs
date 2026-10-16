@@ -28,7 +28,7 @@ pub enum Scene {
     Champion,
 }
 
-pub const CPU_SKILL: [f32; 3] = [0.35, 0.75, 0.92];
+pub const CPU_SKILL: [f32; 3] = [0.5, 0.68, 0.84];
 
 pub struct App {
     pub scene: Scene,

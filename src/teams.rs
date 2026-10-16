@@ -98,8 +98,8 @@ pub const TEAMS: [TeamDef; 4] = [
         pants: (rgb(200, 208, 240), rgb(136, 152, 200)),
         acc: (rgb(248, 72, 168), rgb(176, 32, 112)),
         power: 2,
-        speed: 5,
-        catch: 2,
+        speed: 4,
+        catch: 3,
         court: Court::Slopes,
         players: [
             PlayerDef { name: "SHRED", style: 3, skin: SKIN_LIGHT, hair: BROWN, cap: None },
